@@ -263,6 +263,12 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
 #cfgForm .db{overflow:auto;min-height:0}
 .cfgsel{font:inherit;font-size:14px;border:1px solid var(--bd2);border-radius:9px;padding:9px 10px;background:rgba(0,0,0,.28);color:var(--tx);width:100%;outline:none}
 .cfgsel:focus{border-color:var(--ac2);box-shadow:0 0 0 3px rgba(34,211,238,.15)}
+.qprev{position:relative;border-radius:10px;border:1px solid var(--bd2);background:#fff;max-height:250px;overflow:auto;padding:8px;box-shadow:0 0 0 1px rgba(34,211,238,.15) inset}
+.qprev img{display:block;width:100%;height:auto;margin:0 auto}
+.qprev.zoom img{width:auto;max-width:none;image-rendering:pixelated;margin:0}
+.qbusy{position:absolute;right:8px;top:6px;font-size:11px;color:#3a4a66;background:rgba(255,255,255,.85);padding:2px 6px;border-radius:6px}
+.qctl{margin-top:8px}
+.qctl select{flex:1;min-width:0}
 .dkv{font-family:var(--fh);color:var(--ac2);min-width:42px;text-align:right}
 @media print{
   body{background:#fff}
@@ -367,6 +373,15 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
         </select>
         <small id="cQualHint"></small>
       </div>
+      <div class="fl">
+        <label>Prévia</label>
+        <div class="qprev" id="cPrevBox"><img id="cPrevImg" alt="Prévia de como a etiqueta vai sair na impressora"><span class="qbusy" id="cPrevBusy">Preparando…</span></div>
+        <div class="inp qctl">
+          <select id="cPrevSrc" class="cfgsel" title="Etiqueta usada na prévia"></select>
+          <label class="chk"><input type="checkbox" id="cPrevZoom"> Ampliar pontos</label>
+        </div>
+        <small id="cPrevInfo"></small>
+      </div>
       <div class="fl" id="cDarkBox">
         <label>Intensidade do preto</label>
         <div class="inp"><input type="range" id="cDark" min="0" max="100" step="1" style="flex:1"><b id="cDarkV" class="dkv"></b></div>
@@ -461,6 +476,7 @@ function applyCfg() {
 function fillCfg(c) {
   $('cPaper').value = c.paper; $('cArea').value = c.area; $('cLine').checked = c.showLine;
   $('cThick').value = c.line; $('cGap').value = c.gap; $('cEnd').value = c.end;
+  fillPrevSrc();
   $('cQual').value = c.quality || 'normal'; $('cDark').value = c.dark == null ? 50 : c.dark; $('cDpi').value = c.dpi || 203;
   syncCfgForm();
 }
@@ -474,6 +490,7 @@ function syncCfgForm() {
   $('cDarkV').textContent = $('cDark').value + '%';
   document.querySelectorAll('[data-dpi]').forEach(b => b.classList.toggle('on', +b.dataset.dpi === +$('cDpi').value));
   $('cfgErr').textContent = '';
+  updatePreview();
 }
 function readCfg() {
   const n = id => parseFloat(String($(id).value).replace(',', '.'));
@@ -499,17 +516,17 @@ const QHINT = {
   bw: 'Tudo vira preto ou branco, sem pontilhado. O mais nítido para texto, mas marca d\'água clara some.',
   dither: 'Todos os tons viram pontinhos. Melhor para fotos e logotipos com degradê.'
 };
-const dotsPerMM = () => (cfg.dpi || 203) / 25.4;
+const dotsPerMM = (o = cfg) => (o.dpi || 203) / 25.4;
 const procKey = it => { const K = dotsPerMM(); return `${it.url}|${Math.round(it.w * K)}x${Math.round(it.h * K)}|${cfg.quality}|${cfg.dark}`; };
-function toMono(p, w, h) {
-  const n = w * h, L = new Float32Array(n), q = cfg.quality;
-  const off = ((cfg.dark == null ? 50 : cfg.dark) - 50) * 2.4;     // intensidade do preto
+function toMono(p, w, h, o = cfg) {
+  const n = w * h, L = new Float32Array(n), q = o.quality;
+  const off = ((o.dark == null ? 50 : o.dark) - 50) * 2.4;     // intensidade do preto
   for (let i = 0; i < n; i++) L[i] = p[i * 4] * .299 + p[i * 4 + 1] * .587 + p[i * 4 + 2] * .114 - off;
   if (q === 'mix') for (let i = 0; i < n; i++) L[i] = (L[i] - 70) * 255 / 155;   // escuros → preto, claros → branco
   if (q === 'bw') for (let i = 0; i < n; i++) L[i] = L[i] < 128 ? 0 : 255;
   else {   // pontilhado de Atkinson: pontos limpos, bom para térmicas
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const i = y * w + x, o = L[i], v = o < 128 ? 0 : 255, e = (o - v) / 8; L[i] = v;
+      const i = y * w + x, old = L[i], v = old < 128 ? 0 : 255, e = (old - v) / 8; L[i] = v;
       if (x + 1 < w) L[i + 1] += e; if (x + 2 < w) L[i + 2] += e;
       if (y + 1 < h) { if (x > 0) L[i + w - 1] += e; L[i + w] += e; if (x + 1 < w) L[i + w + 1] += e; }
       if (y + 2 < h) L[i + 2 * w] += e;
@@ -517,14 +534,14 @@ function toMono(p, w, h) {
   }
   for (let i = 0; i < n; i++) { const v = L[i] < 128 ? 0 : 255; p[i * 4] = p[i * 4 + 1] = p[i * 4 + 2] = v; p[i * 4 + 3] = 255; }
 }
-async function processItem(it) {
-  const im = await loadImg(it.url), K = dotsPerMM();
+async function processItem(it, o = cfg) {
+  const im = await loadImg(it.url), K = dotsPerMM(o);
   const w = Math.max(1, Math.round(it.w * K)), h = Math.max(1, Math.round(it.h * K));
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d');
   g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
   g.imageSmoothingQuality = 'high'; g.drawImage(im, 0, 0, w, h);
-  const d = g.getImageData(0, 0, w, h); toMono(d.data, w, h); g.putImageData(d, 0, 0);
+  const d = g.getImageData(0, 0, w, h); toMono(d.data, w, h, o); g.putImageData(d, 0, 0);
   const b = await new Promise(r => c.toBlob(r, 'image/png'));
   return URL.createObjectURL(b);
 }
@@ -542,6 +559,60 @@ function showSrc(it) {
   }
   return it.purl || it.url;
 }
+// ---------- prévia da qualidade (janela de configuração) ----------
+let prevTok = 0, prevUrl = null, sampleUrl = null;
+function sampleImage() {   // etiqueta de exemplo: texto grande e pequeno, logo cinza e degradê
+  if (sampleUrl) return sampleUrl;
+  const c = document.createElement('canvas'); c.width = 684; c.height = 360;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, 684, 360);
+  g.fillStyle = '#000'; g.fillRect(0, 0, 684, 92);
+  g.fillStyle = '#fff'; g.font = 'bold 62px Arial'; g.textAlign = 'center'; g.fillText('COZINHA', 342, 68);
+  g.fillStyle = '#000'; g.textAlign = 'left';
+  g.font = 'bold 52px Arial'; g.fillText('Gaveta 03', 150, 168);
+  g.font = '24px Arial'; g.fillText('Puxador inox · 450 mm · MDF 18', 150, 210);
+  g.font = '15px Arial'; g.fillText('Lote 2026-11 · texto bem pequeno para teste', 150, 240);
+  const rg = g.createRadialGradient(80, 175, 8, 80, 175, 58); rg.addColorStop(0, '#666'); rg.addColorStop(1, '#ccc');
+  g.fillStyle = rg; g.beginPath(); g.arc(80, 175, 56, 0, 7); g.fill();
+  const lg = g.createLinearGradient(30, 0, 654, 0); lg.addColorStop(0, '#fafafa'); lg.addColorStop(1, '#555');
+  g.fillStyle = lg; g.fillRect(30, 270, 624, 34);
+  g.fillStyle = '#000'; g.font = '14px Arial'; g.fillText('degradê (cinzas)', 30, 330);
+  g.fillRect(0, 352, 684, 2);
+  return (sampleUrl = c.toDataURL('image/png'));
+}
+function fillPrevSrc() {
+  const s = $('cPrevSrc'), keep = s.value;
+  s.innerHTML = items.map(it => `<option value="${it.id}"></option>`).join('') + '<option value="sample">Etiqueta de exemplo</option>';
+  items.forEach((it, i) => { s.options[i].textContent = it.name; });
+  s.value = items.some(i => String(i.id) === keep) ? keep : (items[0] ? String(items[0].id) : 'sample');
+}
+async function updatePreview() {
+  if (!$('cfgDlg').open && !$('cPrevSrc').options.length) return;
+  const tok = ++prevTok;
+  const o = { quality: $('cQual').value, dark: +$('cDark').value, dpi: +$('cDpi').value === 300 ? 300 : 203 };
+  const id = $('cPrevSrc').value;
+  const area = Math.min(parseFloat($('cArea').value) || cfg.area, parseFloat($('cPaper').value) || cfg.paper);
+  const it = id === 'sample' ? { url: sampleImage(), w: area, h: area * 360 / 684 } : items.find(i => String(i.id) === id);
+  if (!it) return;
+  $('cPrevBusy').hidden = false;
+  let url = it.url, own = false;
+  if (o.quality !== 'normal') { try { url = await processItem(it, o); own = true; } catch (e) { url = it.url; } }
+  if (tok !== prevTok) { if (own) URL.revokeObjectURL(url); return; }
+  const img = $('cPrevImg'), zoom = $('cPrevZoom').checked;
+  img.onload = () => {
+    img.style.width = zoom ? (img.naturalWidth * 2) + 'px' : '';
+    $('cPrevBusy').hidden = true;
+  };
+  img.src = url;
+  if (prevUrl) URL.revokeObjectURL(prevUrl);
+  prevUrl = own ? url : null;
+  $('cPrevBox').classList.toggle('zoom', zoom);
+  const K = dotsPerMM(o);
+  $('cPrevInfo').textContent = o.quality === 'normal'
+    ? 'Imagem original, sem tratamento.'
+    : `${fmt(it.w)} × ${fmt(it.h)} mm = ${Math.round(it.w * K)} × ${Math.round(it.h * K)} pontos a ${o.dpi} dpi. Cada ponto preto é um ponto aquecido na térmica.`;
+}
+
 // garante que todas estão prontas (antes de imprimir / gerar a tira)
 async function waitProc() {
   if (cfg.quality === 'normal') return;
@@ -1309,6 +1380,9 @@ $('cfgBtn').onclick = () => { fillCfg(cfg); $('cfgDlg').showModal(); };
 $('cLine').onchange = syncCfgForm;
 $('cQual').onchange = syncCfgForm;
 $('cDark').oninput = syncCfgForm;
+$('cPrevSrc').onchange = updatePreview;
+$('cPrevZoom').onchange = updatePreview;
+$('cfgDlg').addEventListener('close', () => { prevTok++; if (prevUrl) { URL.revokeObjectURL(prevUrl); prevUrl = null; } $('cPrevImg').removeAttribute('src'); });
 document.querySelectorAll('[data-dpi]').forEach(b => b.onclick = () => { $('cDpi').value = b.dataset.dpi; syncCfgForm(); });
 document.querySelectorAll('[data-paper]').forEach(b => b.onclick = () => {
   const p = +b.dataset.paper, old = parseFloat($('cPaper').value), a = parseFloat($('cArea').value);
