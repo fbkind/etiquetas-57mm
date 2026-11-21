@@ -174,6 +174,25 @@ option{background:var(--solid);color:var(--tx)}
 .seg button.on{background:var(--grad);border-color:transparent;color:#fff;box-shadow:0 0 12px rgba(34,211,238,.35)}
 .seg .lbl{font-size:12px;color:var(--mut);margin-right:4px}
 .sepv{width:1px;height:22px;background:var(--bd2);margin:0 4px}
+.layers{display:flex;flex-direction:column;gap:4px;max-height:230px;overflow:auto;padding-right:2px}
+.layer{display:flex;align-items:center;gap:6px;padding:5px 6px 5px 9px;border:1px solid var(--bd);border-radius:9px;cursor:pointer;background:rgba(255,255,255,.02);transition:border-color .12s}
+.layer:hover{border-color:var(--bd2)}
+.layer.sel{border-color:var(--ac2);background:var(--ac-bg);box-shadow:0 0 12px rgba(34,211,238,.2)}
+.layer .lic{display:flex;color:var(--ac-d);flex:none}
+.layer .lic svg.i{width:16px;height:16px}
+.layer.hid .lname,.layer.hid .lic{opacity:.4}
+.layer.hid .lname{text-decoration:line-through}
+.lname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--tx)}
+.lb{width:26px;height:26px;border:none;background:none;border-radius:6px;color:var(--mut);display:flex;align-items:center;justify-content:center;flex:none;padding:0}
+.lb:hover{background:var(--ac-bg);color:var(--ac2)}
+.lb.on{color:var(--ac2)}
+.lb:disabled{opacity:.25;cursor:default;background:none}
+.lb svg.i{width:15px;height:15px}
+.lcount{color:var(--mut);letter-spacing:0;font-family:"Segoe UI",system-ui,sans-serif}
+.lempty{font-size:12px;color:var(--mut);line-height:1.5}
+.tinp{font:inherit;font-size:14px;border:1px solid var(--bd2);border-radius:9px;padding:8px 10px;background:rgba(0,0,0,.28);color:var(--tx);outline:none;width:100%}
+.tinp:focus{border-color:var(--ac2);box-shadow:0 0 0 3px rgba(34,211,238,.15)}
+@media(pointer:coarse){.lb{width:34px;height:34px}.layer{padding:6px 6px 6px 10px}}
 .acts{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .acts button{border:1px solid var(--bd);background:rgba(255,255,255,.03);border-radius:8px;padding:7px 6px;font-size:12px}
 .acts button:hover{border-color:var(--ac2);color:var(--ac2)}
@@ -753,7 +772,7 @@ function drawDesign(ctx, d, k, ui) {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.scale(k, k);
   if (d.border) { ctx.lineWidth = 0.4; ctx.strokeStyle = '#000'; ctx.strokeRect(0.2, 0.2, d.w - 0.4, d.h - 0.4); }
-  d.objs.forEach(o => drawObj(ctx, o, k));
+  d.objs.forEach(o => { if (!o.hidden) drawObj(ctx, o, k); });
   if (ui) drawUI(ctx, d, k);
   ctx.restore();
 }
@@ -771,7 +790,7 @@ function drawUI(ctx, d, k) {
     const b = bbox(o); ctx.setLineDash([5 * cp, 3 * cp]);
     ctx.strokeRect(b.x - 2 * cp, b.y - 2 * cp, b.w + 4 * cp, b.h + 4 * cp); ctx.setLineDash([]);
   }
-  handles(o).forEach(h => {
+  if (!o.locked) handles(o).forEach(h => {
     const s = 5 * cp; ctx.fillStyle = '#fff';
     ctx.fillRect(h.x - s, h.y - s, 2 * s, 2 * s); ctx.strokeRect(h.x - s, h.y - s, 2 * s, 2 * s);
   });
@@ -797,10 +816,10 @@ const handleAt = (o, p, tol) => handles(o).find(h => Math.hypot(h.x - p.x, h.y -
 
 edCv.addEventListener('pointerdown', e => {
   const p = ptMM(e), tol = tolMM(), s = selObj();
-  const h = s && handleAt(s, p, tol);
+  const h = s && !s.locked && !s.hidden && handleAt(s, p, tol);
   if (h) drag = { mode: h.k, o: s, p0: p, s0: clone(s) };
   else {
-    const o = [...ed.d.objs].reverse().find(o => hit(o, p, tol / 2));
+    const o = [...ed.d.objs].reverse().find(o => !o.locked && !o.hidden && hit(o, p, tol / 2));
     ed.sel = o ? o.id : null;
     drag = o ? { mode: 'move', o, p0: p, s0: clone(o) } : null;
     buildProps();
@@ -812,8 +831,8 @@ edCv.addEventListener('pointermove', e => {
   const p = ptMM(e);
   if (!drag) {
     const s = selObj(), tol = tolMM();
-    edCv.style.cursor = s && handleAt(s, p, tol) ? (s.t === 'line' ? 'crosshair' : 'nwse-resize')
-      : ed.d.objs.some(o => hit(o, p, tol / 2)) ? 'move' : 'default';
+    edCv.style.cursor = s && !s.locked && !s.hidden && handleAt(s, p, tol) ? (s.t === 'line' ? 'crosshair' : 'nwse-resize')
+      : ed.d.objs.some(o => !o.locked && !o.hidden && hit(o, p, tol / 2)) ? 'move' : 'default';
     return;
   }
   const dx = p.x - drag.p0.x, dy = p.y - drag.p0.y, o = drag.o, s0 = drag.s0;
@@ -868,9 +887,65 @@ function act(a) {
   else if (a === 'cv') o.y += d.h / 2 - (b.y + b.h / 2);
   else if (a === 'front') { d.objs.splice(i, 1); d.objs.push(o); }
   else if (a === 'back') { d.objs.splice(i, 1); d.objs.unshift(o); }
-  else if (a === 'dup') { const c = clone(o); c.id = ++eid; c.x += 2; c.y += 2; d.objs.push(c); ed.sel = c.id; }
+  else if (a === 'up') { if (i < d.objs.length - 1) [d.objs[i], d.objs[i + 1]] = [d.objs[i + 1], d.objs[i]]; }
+  else if (a === 'down') { if (i > 0) [d.objs[i], d.objs[i - 1]] = [d.objs[i - 1], d.objs[i]]; }
+  else if (a === 'hide') o.hidden = !o.hidden;
+  else if (a === 'lock') o.locked = !o.locked;
+  else if (a === 'dup') { const c = clone(o); c.id = ++eid; c.x += 2; c.y += 2; c.locked = false; if (c.name) c.name += ' (cópia)'; d.objs.push(c); ed.sel = c.id; }
   else if (a === 'del') { d.objs.splice(i, 1); ed.sel = null; }
   ed.dirty = true; buildProps(); edDraw();
+}
+
+// ---------- camadas ----------
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const LIC = {
+  text:    '<path d="M5 7V4h14v3M12 4v16M9 20h6"/>',
+  rect:    '<rect x="3" y="6" width="18" height="12" rx="1"/>',
+  ellipse: '<circle cx="12" cy="12" r="8"/>',
+  line:    '<path d="M4 20L20 4"/>',
+  tri:     '<path d="M12 4l9 16H3z"/>',
+  eye:     '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff:  '<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.3 4.2M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+  lock:    '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  unlock:  '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
+  up:      '<path d="M6 15l6-6 6 6"/>',
+  down:    '<path d="M6 9l6 6 6-6"/>'
+};
+const lsvg = k => `<svg class="i" viewBox="0 0 24 24">${LIC[k]}</svg>`;
+function layerName(o, auto) {
+  if (o.name && !auto) return o.name;
+  if (o.t === 'text') { const l = String(o.text || '').split('\n')[0].trim(); return l ? '“' + (l.length > 24 ? l.slice(0, 24) + '…' : l) + '”' : 'Texto vazio'; }
+  const same = ed.d.objs.filter(x => x.t === o.t), n = same.indexOf(o) + 1;
+  return (o.t === 'ellipse' ? 'Círculo' : NAMES[o.t]) + (same.length > 1 ? ' ' + n : '');
+}
+function renderLayers() {
+  const box = $('edLayers'); if (!box) return;
+  const objs = ed.d.objs, cnt = $('edProps').querySelector('.lcount');
+  if (cnt) cnt.textContent = objs.length ? `(${objs.length})` : '';
+  if (!objs.length) { box.innerHTML = '<div class="lempty">Nenhuma camada. Adicione texto ou formas pela barra de ferramentas.</div>'; return; }
+  box.innerHTML = '';
+  [...objs].reverse().forEach((o, idx) => {     // a primeira da lista é a da frente
+    const r = document.createElement('div');
+    r.className = 'layer' + (o.id === ed.sel ? ' sel' : '') + (o.hidden ? ' hid' : '') + (o.locked ? ' lck' : '');
+    r.title = 'Clique para selecionar · duplo clique para renomear';
+    r.innerHTML = `<span class="lic">${lsvg(o.t)}</span><span class="lname"></span>
+      <button class="lb${o.hidden ? ' on' : ''}" data-l="hide" title="${o.hidden ? 'Mostrar' : 'Ocultar'} camada">${lsvg(o.hidden ? 'eyeOff' : 'eye')}</button>
+      <button class="lb${o.locked ? ' on' : ''}" data-l="lock" title="${o.locked ? 'Desbloquear' : 'Bloquear'} camada">${lsvg(o.locked ? 'lock' : 'unlock')}</button>
+      <button class="lb" data-l="up" title="Subir (para frente)" ${idx === 0 ? 'disabled' : ''}>${lsvg('up')}</button>
+      <button class="lb" data-l="down" title="Descer (para trás)" ${idx === objs.length - 1 ? 'disabled' : ''}>${lsvg('down')}</button>`;
+    r.querySelector('.lname').textContent = layerName(o);
+    r.onclick = () => { if (ed.sel !== o.id) { ed.sel = o.id; buildProps(); edDraw(); } };
+    r.querySelector('.lname').ondblclick = async e => {
+      e.stopPropagation();
+      const v = await uiPrompt('Nome da camada:', o.name || layerName(o, true).replace(/[“”]/g, ''));
+      if (v !== null) { o.name = v.trim(); ed.dirty = true; buildProps(); }
+    };
+    r.querySelectorAll('[data-l]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      ed.sel = o.id; act(b.dataset.l);
+    });
+    box.appendChild(r);
+  });
 }
 
 // ---------- painel de propriedades ----------
@@ -881,9 +956,11 @@ function buildProps() {
   let h = `<div class="psec"><h3>Etiqueta</h3>
     <div class="g2"><label>Largura${numF('data-l="w"', 10, W, 0.5, 'mm')}</label><label>Altura${numF('data-l="h"', 5, 300, 0.5, 'mm')}</label></div>
     <label class="chk"><input type="checkbox" data-l="border"> Borda em volta da etiqueta</label></div>`;
+  h += `<div class="psec"><h3>Camadas <span class="lcount"></span></h3><div class="layers" id="edLayers"></div></div>`;
   if (!o) h += `<p class="hint">Use a barra da esquerda para adicionar <b>texto</b> ou <b>formas</b>. Clique num elemento para editar, arraste para mover e puxe o quadradinho azul para mudar o tamanho.</p>`;
   else {
-    h += `<div class="psec"><h3>${NAMES[o.t]}</h3>`;
+    h += `<div class="psec"><h3>Camada selecionada · ${NAMES[o.t]}${o.locked ? ' · bloqueada' : ''}${o.hidden ? ' · oculta' : ''}</h3>
+      <label>Nome da camada<input type="text" class="tinp" data-p="name" maxlength="40" placeholder="${esc(layerName(o, true))}"></label>`;
     if (o.t === 'text') {
       h += `<textarea data-p="text" rows="3" placeholder="Digite o texto"></textarea>
         <label>Fonte<select data-p="font">${FONTS.map(f => `<option style="font-family:'${f}'">${f}</option>`).join('')}</select></label>
@@ -922,7 +999,7 @@ function buildProps() {
     const k = inp.dataset.p;
     inp.oninput = inp.onchange = () => {
       if (inp.type === 'checkbox') o[k] = inp.checked;
-      else if (inp.tagName === 'TEXTAREA' || inp.tagName === 'SELECT') o[k] = inp.value;
+      else if (inp.tagName === 'TEXTAREA' || inp.tagName === 'SELECT' || inp.type === 'text') { o[k] = inp.value; if (k === 'text' || k === 'name') renderLayers(); }
       else { const v = parseFloat(inp.value); if (isNaN(v)) return; o[k] = (k === 'w' || k === 'h') ? Math.max(1, v) : v; }
       ed.dirty = true; edDraw(); syncProps(inp);
     };
@@ -931,6 +1008,7 @@ function buildProps() {
   P.querySelectorAll('[data-tog]').forEach(b => b.onclick = () => { o[b.dataset.tog] = !o[b.dataset.tog]; ed.dirty = true; edDraw(); syncProps(); });
   P.querySelectorAll('[data-set]').forEach(b => b.onclick = () => { o[b.dataset.set] = b.dataset.v; ed.dirty = true; edDraw(); syncProps(); });
   P.querySelectorAll('[data-act]').forEach(b => b.onclick = () => act(b.dataset.act));
+  renderLayers();
   syncProps();
 }
 function syncProps(except) {
@@ -945,7 +1023,7 @@ function syncProps(except) {
     const v = o[inp.dataset.p];
     if (inp.type === 'checkbox') inp.checked = !!v;
     else if (inp.type === 'number' || inp.type === 'range') inp.value = r1(Math.abs(v));
-    else inp.value = v;
+    else inp.value = v == null ? '' : v;
   });
   P.querySelectorAll('[data-tog]').forEach(b => b.classList.toggle('on', !!o[b.dataset.tog]));
   P.querySelectorAll('[data-set]').forEach(b => b.classList.toggle('on', o[b.dataset.set] === b.dataset.v));
@@ -1029,7 +1107,7 @@ $('edDlg').addEventListener('keydown', e => {
   const o = selObj(); if (!o) return;
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); act('del'); }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') { e.preventDefault(); act('dup'); }
-  else if (e.key.startsWith('Arrow')) {
+  else if (e.key.startsWith('Arrow') && !o.locked) {
     e.preventDefault(); const s = e.shiftKey ? 2 : 0.5;
     if (e.key === 'ArrowLeft') o.x -= s; if (e.key === 'ArrowRight') o.x += s;
     if (e.key === 'ArrowUp') o.y -= s; if (e.key === 'ArrowDown') o.y += s;
