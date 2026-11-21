@@ -368,6 +368,9 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
       <button class="tool" data-add="ellipse" title="Adicionar círculo"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>Círculo</button>
       <button class="tool" data-add="line" title="Adicionar linha"><svg class="i" viewBox="0 0 24 24"><path d="M4 20L20 4"/></svg>Linha</button>
       <button class="tool" data-add="tri" title="Adicionar triângulo"><svg class="i" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/></svg>Triângulo</button>
+      <button class="tool" data-addimg="img" title="Adicionar imagem (logo, foto)"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/></svg>Imagem</button>
+      <button class="tool" data-addimg="wm" title="Adicionar imagem como marca d'água"><svg class="i" viewBox="0 0 24 24" style="opacity:.55"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/></svg>Marca d'água</button>
+      <input type="file" id="edImgFile" accept="image/*" hidden>
     </div>
     <div id="edStage">
       <canvas id="edCanvas"></canvas>
@@ -614,8 +617,11 @@ let dragDepth = 0;
 window.addEventListener('dragenter', e => { e.preventDefault(); if (anyDlg()) return; dragDepth++; drop.classList.add('over'); });
 window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; drop.classList.remove('over'); } });
 window.addEventListener('dragover', e => e.preventDefault());
-window.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; drop.classList.remove('over'); if (anyDlg()) return; add(e.dataTransfer.files); });
-window.addEventListener('paste', e => anyDlg() || add([...e.clipboardData.items].filter(i => i.kind === 'file').map(i => i.getAsFile())));
+window.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; drop.classList.remove('over'); if ($('edDlg').open && !$('askDlg').open) { addImageFile(e.dataTransfer.files[0], false); return; } if (anyDlg()) return; add(e.dataTransfer.files); });
+window.addEventListener('paste', e => {
+  if ($('edDlg').open && !$('askDlg').open && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { const f = [...e.clipboardData.items].find(i => i.kind === 'file'); if (f) addImageFile(f.getAsFile(), false); return; }
+  anyDlg() || add([...e.clipboardData.items].filter(i => i.kind === 'file').map(i => i.getAsFile()));
+});
 $('clear').onclick = async () => { if (items.length && await uiConfirm('Remover todas as imagens da lista?', 'Remover', true)) { items.forEach(freeUrls); items = []; sel = null; render(); } };
 $('print').onclick = () => { if (!items.length) { uiAlert('Adicione ao menos uma imagem antes de imprimir.'); return; } draw(); window.print(); };
 
@@ -690,7 +696,7 @@ $('stripClose').onclick = () => $('stripDlg').close();
 const PT = 0.3528;          // 1 ponto tipográfico em mm
 const EXPORT_K = 12;        // px por mm no PNG gerado (~305 dpi)
 const FONTS = ['Arial', 'Arial Black', 'Bahnschrift', 'Segoe UI', 'Verdana', 'Tahoma', 'Courier New', 'Times New Roman', 'Impact'];
-const NAMES = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo / elipse', line: 'Linha', tri: 'Triângulo' };
+const NAMES = { img: 'Imagem', text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo / elipse', line: 'Linha', tri: 'Triângulo' };
 const AL = {
   left:   '<svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 10h10M4 14h16M4 18h10"/></svg>',
   center: '<svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M7 10h10M4 14h16M7 18h10"/></svg>',
@@ -712,6 +718,7 @@ function openEditor(item) {
   $('edSave').textContent = item ? 'Salvar alterações' : 'Adicionar à lista';
   $('edDlg').showModal();
   fillModels(); edLayout(); buildProps(); edDraw();
+  ensureImages(d).then(() => { if (ed && ed.d === d) edDraw(); });
 }
 async function closeEditor() {
   if (ed && ed.dirty && !(await uiConfirm('Descartar as alterações desta etiqueta?', 'Descartar', true))) return;
@@ -751,6 +758,10 @@ function drawObj(ctx, o, k) {
     ctx.font = fontOf(o, k); ctx.fillStyle = o.color || '#000'; ctx.textBaseline = 'top'; ctx.textAlign = o.align;
     const ax = o.align === 'center' ? o.x + o.w / 2 : o.align === 'right' ? o.x + o.w : o.x;
     lines.forEach((l, i) => ctx.fillText(l, ax * k, (o.y + i * lh + (lh - o.size * PT) / 2) * k));
+  } else if (o.t === 'img') {
+    const e = imgCache.get(o.src);
+    if (e && e.im) { ctx.globalAlpha = (o.op == null ? 100 : o.op) / 100; ctx.drawImage(o.gray ? e.gray : e.im, o.x, o.y, o.w, o.h); }
+    else cacheImg(o.src).then(() => { if (ed && $('edDlg').open) edDraw(); });
   } else if (o.t === 'line') {
     ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + o.w, o.y + o.h); ctx.stroke();
   } else {
@@ -845,7 +856,8 @@ edCv.addEventListener('pointermove', e => {
       if (Math.abs(cy - ed.d.h / 2) < snap) { o.y += ed.d.h / 2 - cy; guides.h = true; }
     }
   } else if (drag.mode === 'se') {
-    if (o.t === 'text') o.size = Math.max(4, Math.min(200, Math.round(s0.size * Math.max(0.05, (s0.w + dx) / s0.w) * 2) / 2));
+    if (o.t === 'img') { o.w = Math.max(2, s0.w + dx); o.h = o.w * o.ratio; }
+    else if (o.t === 'text') o.size = Math.max(4, Math.min(200, Math.round(s0.size * Math.max(0.05, (s0.w + dx) / s0.w) * 2) / 2));
     else {
       o.w = Math.max(1, s0.w + dx); o.h = Math.max(1, s0.h + dy);
       if (e.shiftKey) o.w = o.h = Math.max(o.w, o.h);
@@ -887,12 +899,73 @@ function act(a) {
   else if (a === 'cv') o.y += d.h / 2 - (b.y + b.h / 2);
   else if (a === 'front') { d.objs.splice(i, 1); d.objs.push(o); }
   else if (a === 'back') { d.objs.splice(i, 1); d.objs.unshift(o); }
+  else if (a === 'fit') fitImg(o, 'contain');
+  else if (a === 'fill') fitImg(o, 'cover');
   else if (a === 'up') { if (i < d.objs.length - 1) [d.objs[i], d.objs[i + 1]] = [d.objs[i + 1], d.objs[i]]; }
   else if (a === 'down') { if (i > 0) [d.objs[i], d.objs[i - 1]] = [d.objs[i - 1], d.objs[i]]; }
   else if (a === 'hide') o.hidden = !o.hidden;
   else if (a === 'lock') o.locked = !o.locked;
   else if (a === 'dup') { const c = clone(o); c.id = ++eid; c.x += 2; c.y += 2; c.locked = false; if (c.name) c.name += ' (cópia)'; d.objs.push(c); ed.sel = c.id; }
   else if (a === 'del') { d.objs.splice(i, 1); ed.sel = null; }
+  ed.dirty = true; buildProps(); edDraw();
+}
+
+// ---------- imagens e marca d'água ----------
+const imgCache = new Map();   // src -> { im, gray, p }
+function cacheImg(src) {
+  const old = imgCache.get(src); if (old) return old.p;
+  const e = { im: null, gray: null };
+  e.p = new Promise(res => {
+    const im = new Image();
+    im.onload = () => {
+      e.im = im;
+      try {   // versão em tons de cinza, calculada uma vez
+        const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
+        const g = c.getContext('2d'); g.drawImage(im, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height), p = d.data;
+        for (let i = 0; i < p.length; i += 4) { const y = p[i] * .299 + p[i + 1] * .587 + p[i + 2] * .114; p[i] = p[i + 1] = p[i + 2] = y; }
+        g.putImageData(d, 0, 0); e.gray = c;
+      } catch (err) { e.gray = im; }
+      res(e);
+    };
+    im.onerror = () => res(e);
+    im.src = src;
+  });
+  imgCache.set(src, e);
+  return e.p;
+}
+const ensureImages = d => Promise.all(d.objs.filter(o => o.t === 'img').map(o => cacheImg(o.src)));
+function fitImg(o, mode, f = 1) {
+  const d = ed.d, W0 = d.w * f, H0 = d.h * f;
+  o.w = mode === 'cover' ? Math.max(W0, H0 / o.ratio) : Math.min(W0, H0 / o.ratio);
+  o.h = o.w * o.ratio; o.x = (d.w - o.w) / 2; o.y = (d.h - o.h) / 2;
+}
+async function addImageFile(file, wm) {
+  if (!file || !file.type || !file.type.startsWith('image/')) return;
+  const url = URL.createObjectURL(file);
+  const im = await loadImg(url).catch(() => null);
+  URL.revokeObjectURL(url);
+  if (!im) { uiAlert('Não foi possível abrir essa imagem.'); return; }
+  // reduz para no máximo 900 px (sobra para 203 dpi e mantém os modelos leves)
+  const sc = Math.min(1, 900 / Math.max(im.naturalWidth, im.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(im.naturalWidth * sc)); c.height = Math.max(1, Math.round(im.naturalHeight * sc));
+  c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+  const src = c.toDataURL('image/png');
+  await cacheImg(src);
+  const o = { id: ++eid, t: 'img', src, ratio: c.height / c.width, x: 0, y: 0, w: 0, h: 0, op: 100, gray: false, wm: false,
+              name: (file.name || '').replace(/\.[^.]+$/, '').slice(0, 40) };
+  if (wm) { fitImg(o, 'contain', 0.9); Object.assign(o, { wm: true, op: 20, gray: true, locked: true, name: '' }); ed.d.objs.unshift(o); }
+  else { fitImg(o, 'contain', 0.5); ed.d.objs.push(o); }
+  ed.sel = o.id; ed.dirty = true; buildProps(); edDraw();
+}
+let imgMode = 'img';
+document.querySelectorAll('[data-addimg]').forEach(b => b.onclick = () => { imgMode = b.dataset.addimg; $('edImgFile').click(); });
+$('edImgFile').onchange = () => { const f = $('edImgFile').files[0]; $('edImgFile').value = ''; addImageFile(f, imgMode === 'wm'); };
+function setWatermark(o, on) {
+  o.wm = on;
+  if (on) { o.op = 20; o.gray = true; const d = ed.d, i = d.objs.indexOf(o); d.objs.splice(i, 1); d.objs.unshift(o); }
+  else { o.op = 100; o.gray = false; }
   ed.dirty = true; buildProps(); edDraw();
 }
 
@@ -904,6 +977,7 @@ const LIC = {
   ellipse: '<circle cx="12" cy="12" r="8"/>',
   line:    '<path d="M4 20L20 4"/>',
   tri:     '<path d="M12 4l9 16H3z"/>',
+  img:     '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/>',
   eye:     '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff:  '<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.3 4.2M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
   lock:    '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
@@ -916,6 +990,7 @@ function layerName(o, auto) {
   if (o.name && !auto) return o.name;
   if (o.t === 'text') { const l = String(o.text || '').split('\n')[0].trim(); return l ? '“' + (l.length > 24 ? l.slice(0, 24) + '…' : l) + '”' : 'Texto vazio'; }
   const same = ed.d.objs.filter(x => x.t === o.t), n = same.indexOf(o) + 1;
+  if (o.t === 'img' && o.wm) return "Marca d'água";
   return (o.t === 'ellipse' ? 'Círculo' : NAMES[o.t]) + (same.length > 1 ? ' ' + n : '');
 }
 function renderLayers() {
@@ -959,7 +1034,7 @@ function buildProps() {
   h += `<div class="psec"><h3>Camadas <span class="lcount"></span></h3><div class="layers" id="edLayers"></div></div>`;
   if (!o) h += `<p class="hint">Use a barra da esquerda para adicionar <b>texto</b> ou <b>formas</b>. Clique num elemento para editar, arraste para mover e puxe o quadradinho azul para mudar o tamanho.</p>`;
   else {
-    h += `<div class="psec"><h3>Camada selecionada · ${NAMES[o.t]}${o.locked ? ' · bloqueada' : ''}${o.hidden ? ' · oculta' : ''}</h3>
+    h += `<div class="psec"><h3>Camada selecionada · ${o.wm ? "Marca d'água" : NAMES[o.t]}${o.locked ? ' · bloqueada' : ''}${o.hidden ? ' · oculta' : ''}</h3>
       <label>Nome da camada<input type="text" class="tinp" data-p="name" maxlength="40" placeholder="${esc(layerName(o, true))}"></label>`;
     if (o.t === 'text') {
       h += `<textarea data-p="text" rows="3" placeholder="Digite o texto"></textarea>
@@ -973,6 +1048,13 @@ function buildProps() {
           <button data-set="align" data-v="right" title="Alinhar à direita">${AL.right}</button>
         </div>
         <div class="seg"><span class="lbl">Cor</span><button data-set="color" data-v="#000">Preto</button><button data-set="color" data-v="#fff">Branco</button></div>`;
+    } else if (o.t === 'img') {
+      h += `<div class="g2"><label>Largura${numF('data-p="w"', 2, 300, 0.5, 'mm')}</label><label>Altura${numF('data-p="h"', 2, 300, 0.5, 'mm')}</label></div>
+        <label>Intensidade<div class="inp"><input type="range" data-p="op" min="5" max="100" step="1" style="flex:1">${numF('data-p="op"', 5, 100, 1, '%')}</div></label>
+        <label class="chk"><input type="checkbox" data-p="gray"> Tons de cinza</label>
+        <label class="chk"><input type="checkbox" data-wm> Usar como marca d'água (clara, atrás de tudo)</label>
+        <div class="acts"><button data-act="fit">Ajustar à etiqueta</button><button data-act="fill">Preencher etiqueta</button></div>
+        <p class="hint">Na térmica, tons claros saem pontilhados. Para marca d'água, use entre 15% e 35%.</p>`;
     } else {
       if (o.t !== 'line') h += `<div class="g2"><label>Largura${numF('data-p="w"', 1, 300, 0.5, 'mm')}</label><label>Altura${numF('data-p="h"', 1, 300, 0.5, 'mm')}</label></div>`;
       h += `<label>Espessura da linha${numF('data-p="sw"', 0.1, 10, 0.1, 'mm')}</label>`;
@@ -1000,7 +1082,7 @@ function buildProps() {
     inp.oninput = inp.onchange = () => {
       if (inp.type === 'checkbox') o[k] = inp.checked;
       else if (inp.tagName === 'TEXTAREA' || inp.tagName === 'SELECT' || inp.type === 'text') { o[k] = inp.value; if (k === 'text' || k === 'name') renderLayers(); }
-      else { const v = parseFloat(inp.value); if (isNaN(v)) return; o[k] = (k === 'w' || k === 'h') ? Math.max(1, v) : v; }
+      else { const v = parseFloat(inp.value); if (isNaN(v)) return; o[k] = (k === 'w' || k === 'h') ? Math.max(1, v) : v; if (o.t === 'img') { if (k === 'w') o.h = o.w * o.ratio; if (k === 'h') o.w = o.h / o.ratio; } }
       ed.dirty = true; edDraw(); syncProps(inp);
     };
     inp.onblur = () => syncProps();
@@ -1008,6 +1090,8 @@ function buildProps() {
   P.querySelectorAll('[data-tog]').forEach(b => b.onclick = () => { o[b.dataset.tog] = !o[b.dataset.tog]; ed.dirty = true; edDraw(); syncProps(); });
   P.querySelectorAll('[data-set]').forEach(b => b.onclick = () => { o[b.dataset.set] = b.dataset.v; ed.dirty = true; edDraw(); syncProps(); });
   P.querySelectorAll('[data-act]').forEach(b => b.onclick = () => act(b.dataset.act));
+  const wmc = P.querySelector('[data-wm]');
+  if (wmc) { wmc.checked = !!o.wm; wmc.onchange = () => setWatermark(o, wmc.checked); }
   renderLayers();
   syncProps();
 }
@@ -1031,7 +1115,8 @@ function syncProps(except) {
 
 // ---------- salvar / PNG ----------
 function plainDesign() { const d = clone(ed.d); d.objs.forEach(o => delete o.id); return d; }
-function renderPNG(cb) {
+async function renderPNG(cb) {
+  await ensureImages(ed.d);
   const c = document.createElement('canvas');
   c.width = Math.round(ed.d.w * EXPORT_K); c.height = Math.round(ed.d.h * EXPORT_K);
   drawDesign(c.getContext('2d'), ed.d, c.width / ed.d.w, false);
@@ -1079,6 +1164,7 @@ $('edModels').onchange = async () => {
   ed.d = clone(m.design); ed.d.objs.forEach(o => { o.id = ++eid; });
   if (ed.d.w > W) ed.d.w = W;
   ed.sel = null; ed.dirty = true; edLayout(); buildProps(); edDraw();
+  ensureImages(ed.d).then(() => edDraw());
 };
 $('edModelSave').onclick = async () => {
   if (!ed.d.objs.length) { uiAlert('Crie a etiqueta antes de salvar como modelo.'); return; }

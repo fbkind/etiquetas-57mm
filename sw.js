@@ -1,6 +1,6 @@
 // Service worker: guarda o app no aparelho para abrir mesmo sem internet.
 // Ao publicar uma versão nova, troque o número abaixo.
-const CACHE = 'etiquetas57-v2';
+const CACHE = 'etiquetas57-v3';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
