@@ -257,6 +257,16 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
 .sp{height:var(--gap,2mm)}
 .ln{border:0;border-top:var(--line,.3mm) solid #000;margin:0;height:0}
 .pi{display:block;margin:0 auto}
+.pb{display:flex;align-items:center;justify-content:center;margin:0 auto}
+.pb .pi{margin:0;flex:none}
+#preview .pb{outline:1px dashed rgba(47,123,255,.55);outline-offset:-1px}
+.fsz{display:flex;align-items:flex-end;gap:10px;margin-top:8px}
+.fsz b{padding-bottom:9px;color:var(--mut)}
+.fsz small{margin:0 0 4px}
+.size .top b input{width:58px;border:1px solid var(--bd2);border-radius:7px;background:rgba(0,0,0,.28);color:var(--ac2);font:inherit;padding:1px 4px;text-align:right;outline:none}
+.size .top b input:focus{border-color:var(--ac2)}
+.size .fixnote{font-size:12.5px;color:var(--mut);margin:12px 0 2px;line-height:1.45}
+.size .fixnote b{color:var(--ac2)}
 @media print{.pi.px{image-rendering:pixelated}}
 #cfgDlg{overflow:hidden}
 #cfgForm{display:flex;flex-direction:column;max-height:calc(100dvh - 40px)}
@@ -346,6 +356,27 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
         <label>Largura máxima da imagem (área de impressão)</label>
         <div class="inp"><div class="num"><input id="cArea" type="number" min="10" max="120" step="0.5"><span>mm</span></div></div>
         <small>Se a impressora corta as bordas, use um valor menor que o papel (ex.: 48 mm no papel de 57/58 mm).</small>
+      </div>
+      <div class="fl">
+        <label>Tamanho da etiqueta (largura × altura)</label>
+        <div class="inp"><label class="chk"><input id="cFixed" type="checkbox"> Mesmo tamanho para todas as etiquetas</label></div>
+        <div id="cFixBox">
+          <div class="fsz">
+            <div><small>Largura</small><div class="num"><input id="cFW" type="number" min="10" max="120" step="0.5"><span>mm</span></div></div>
+            <b>×</b>
+            <div><small>Altura</small><div class="num"><input id="cFH" type="number" min="5" max="300" step="0.5"><span>mm</span></div></div>
+          </div>
+          <div class="chips" id="cFsChips">
+            <button type="button" class="chip" data-fs="57x30">57 × 30</button><button type="button" class="chip" data-fs="57x40">57 × 40</button>
+            <button type="button" class="chip" data-fs="50x30">50 × 30</button><button type="button" class="chip" data-fs="40x30">40 × 30</button>
+            <button type="button" class="chip" data-fs="50x25">50 × 25</button>
+          </div>
+          <div class="chips">
+            <button type="button" class="chip" data-fit="contain">Encaixar (sem distorcer)</button><button type="button" class="chip" data-fit="fill">Esticar para preencher</button>
+            <input type="hidden" id="cFit">
+          </div>
+        </div>
+        <small id="cFixHint">Desligado: cada imagem usa o tamanho ajustado na lista. Ligado: toda etiqueta sai com esse tamanho exato.</small>
       </div>
       <div class="fl">
         <label>Linha separadora</label>
@@ -462,13 +493,22 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
 const $ = id => document.getElementById(id);
 
 // ---- Configuração das dimensões (salva neste computador) ----
-const DEF = { paper: 57, area: 57, showLine: true, lineStart: false, lineEnd: false, line: 0.3, gap: 2, end: 0, quality: 'normal', dark: 50, dpi: 203 };
+const DEF = { paper: 57, area: 57, fixed: false, fw: 57, fh: 30, fit: 'contain', showLine: true, lineStart: false, lineEnd: false, line: 0.3, gap: 2, end: 0, quality: 'normal', dark: 50, dpi: 203 };
 const QUAL = { normal: '', mix: 'Nítida', bw: 'P&B puro', dither: 'Pontilhada' };
 let cfg = { ...DEF };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('etq57cfg') || '{}')); } catch (e) {}
 let W = cfg.area;
 const fmt = v => String(+(+v).toFixed(1)).replace('.', ',');
 const sepMM = () => cfg.showLine ? cfg.gap * 2 + cfg.line : cfg.gap;
+// tamanho final de cada etiqueta na tira: caixa (bw × bh) e a imagem dentro dela (w × h)
+function lay(it) {
+  if (!cfg.fixed) return { bw: it.w, bh: it.h, w: it.w, h: it.h };
+  const bw = cfg.fw, bh = cfg.fh;
+  if (cfg.fit === 'fill') return { bw, bh, w: bw, h: bh };
+  let w = bw, h = bw * it.ratio;
+  if (h > bh) { h = bh; w = bh / it.ratio; }
+  return { bw, bh, w, h };
+}
 // linhas nas pontas: início = linha + espaço; final = espaço + linha
 const edgeMM = () => ((cfg.lineStart ? 1 : 0) + (cfg.lineEnd ? 1 : 0)) * (cfg.gap + cfg.line);
 
@@ -480,13 +520,14 @@ function applyCfg() {
   root.setProperty('--line', cfg.line + 'mm');
   $('pageCss').textContent = `@media print{@page{size:${cfg.paper}mm auto;margin:0}#printArea{padding-bottom:${cfg.end}mm}}`;
   const edges = cfg.lineStart && cfg.lineEnd ? 'linha no início e no fim' : cfg.lineStart ? 'linha no início' : cfg.lineEnd ? 'linha no fim' : '';
-  $('spec').textContent = `Papel ${fmt(cfg.paper)} mm · ` + (cfg.showLine ? `${fmt(cfg.gap)} mm + linha + ${fmt(cfg.gap)} mm` : `${fmt(cfg.gap)} mm entre imagens`) + (edges ? ` · ${edges}` : '') + (QUAL[cfg.quality] ? ` · ${QUAL[cfg.quality]}` : '');
+  $('spec').textContent = `Papel ${fmt(cfg.paper)} mm · ` + (cfg.fixed ? `etiqueta ${fmt(cfg.fw)} × ${fmt(cfg.fh)} mm · ` : '') + (cfg.showLine ? `${fmt(cfg.gap)} mm + linha + ${fmt(cfg.gap)} mm` : `${fmt(cfg.gap)} mm entre imagens`) + (edges ? ` · ${edges}` : '') + (QUAL[cfg.quality] ? ` · ${QUAL[cfg.quality]}` : '');
   items.forEach(it => { if (it.w > W) setW(it, W); });
 }
 
 function fillCfg(c) {
   $('cPaper').value = c.paper; $('cArea').value = c.area; $('cLine').checked = c.showLine;
   $('cLineStart').checked = !!c.lineStart; $('cLineEnd').checked = !!c.lineEnd;
+  $('cFixed').checked = !!c.fixed; $('cFW').value = c.fw || 57; $('cFH').value = c.fh || 30; $('cFit').value = c.fit || 'contain';
   $('cThick').value = c.line; $('cGap').value = c.gap; $('cEnd').value = c.end;
   fillPrevSrc();
   $('cQual').value = c.quality || 'normal'; $('cDark').value = c.dark == null ? 50 : c.dark; $('cDpi').value = c.dpi || 203;
@@ -496,6 +537,13 @@ function syncCfgForm() {
   const on = $('cLine').checked, anyLine = on || $('cLineStart').checked || $('cLineEnd').checked;
   $('cThickBox').style.opacity = anyLine ? 1 : .4; $('cThick').disabled = !anyLine;
   $('cGapLbl').textContent = on ? 'Espaço antes e depois da linha' : 'Espaço entre as imagens';
+  const fx = $('cFixed').checked;
+  $('cFixBox').style.display = fx ? '' : 'none';
+  $('cFixHint').textContent = fx
+    ? ($('cFit').value === 'fill' ? 'Esticar: a imagem ocupa a etiqueta inteira, podendo ficar achatada ou esticada.' : 'Encaixar: a imagem fica o maior possível dentro da etiqueta, centralizada, sem distorcer.')
+    : 'Desligado: cada imagem usa o tamanho ajustado na lista. Ligado: toda etiqueta sai com esse tamanho exato.';
+  document.querySelectorAll('[data-fit]').forEach(b => b.classList.toggle('on', b.dataset.fit === $('cFit').value));
+  document.querySelectorAll('[data-fs]').forEach(b => { const [a, z] = b.dataset.fs.split('x'); b.classList.toggle('on', +a === +$('cFW').value && +z === +$('cFH').value); });
   const q = $('cQual').value;
   $('cQualHint').textContent = QHINT[q];
   $('cDarkBox').hidden = q === 'normal';
@@ -507,11 +555,20 @@ function syncCfgForm() {
 function readCfg() {
   const n = id => parseFloat(String($(id).value).replace(',', '.'));
   const c = { paper: n('cPaper'), area: n('cArea'), showLine: $('cLine').checked, lineStart: $('cLineStart').checked, lineEnd: $('cLineEnd').checked,
+              fixed: $('cFixed').checked, fw: n('cFW'), fh: n('cFH'), fit: $('cFit').value === 'fill' ? 'fill' : 'contain',
               line: n('cThick'), gap: n('cGap'), end: n('cEnd'),
               quality: $('cQual').value, dark: Math.round(n('cDark')), dpi: n('cDpi') === 300 ? 300 : 203 };
   if (!(c.paper >= 20 && c.paper <= 120)) return 'Largura do papel deve ficar entre 20 e 120 mm.';
   if (!(c.area >= 10)) return 'A largura máxima da imagem deve ter pelo menos 10 mm.';
   if (c.area > c.paper) return 'A largura máxima da imagem não pode ser maior que o papel.';
+  if (c.fixed) {
+    if (!(c.fw >= 10)) return 'A largura da etiqueta deve ter pelo menos 10 mm.';
+    if (c.fw > c.paper) return 'A largura da etiqueta não pode ser maior que o papel.';
+    if (!(c.fh >= 5 && c.fh <= 300)) return 'A altura da etiqueta deve ficar entre 5 e 300 mm.';
+  } else {
+    if (!(c.fw >= 10 && c.fw <= c.paper)) c.fw = Math.min(cfg.fw, c.paper);
+    if (!(c.fh >= 5 && c.fh <= 300)) c.fh = cfg.fh;
+  }
   const anyLine = c.showLine || c.lineStart || c.lineEnd;
   if (anyLine && !(c.line >= 0.1 && c.line <= 2)) return 'Espessura da linha deve ficar entre 0,1 e 2 mm.';
   if (!(c.gap >= 0 && c.gap <= 30)) return 'O espaço deve ficar entre 0 e 30 mm.';
@@ -531,7 +588,7 @@ const QHINT = {
   dither: 'Todos os tons viram pontinhos. Melhor para fotos e logotipos com degradê.'
 };
 const dotsPerMM = (o = cfg) => (o.dpi || 203) / 25.4;
-const procKey = it => { const K = dotsPerMM(); return `${it.url}|${Math.round(it.w * K)}x${Math.round(it.h * K)}|${cfg.quality}|${cfg.dark}`; };
+const procKey = it => { const K = dotsPerMM(), L = lay(it); return `${it.url}|${Math.round(L.w * K)}x${Math.round(L.h * K)}|${cfg.quality}|${cfg.dark}`; };
 function toMono(p, w, h, o = cfg) {
   const n = w * h, L = new Float32Array(n), q = o.quality;
   const off = ((o.dark == null ? 50 : o.dark) - 50) * 2.4;     // intensidade do preto
@@ -548,9 +605,9 @@ function toMono(p, w, h, o = cfg) {
   }
   for (let i = 0; i < n; i++) { const v = L[i] < 128 ? 0 : 255; p[i * 4] = p[i * 4 + 1] = p[i * 4 + 2] = v; p[i * 4 + 3] = 255; }
 }
-async function processItem(it, o = cfg) {
+async function processItem(it, o = cfg, L = lay(it)) {
   const im = await loadImg(it.url), K = dotsPerMM(o);
-  const w = Math.max(1, Math.round(it.w * K)), h = Math.max(1, Math.round(it.h * K));
+  const w = Math.max(1, Math.round(L.w * K)), h = Math.max(1, Math.round(L.h * K));
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d');
   g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
@@ -610,7 +667,8 @@ async function updatePreview() {
   if (!it) return;
   $('cPrevBusy').hidden = false;
   let url = it.url, own = false;
-  if (o.quality !== 'normal') { try { url = await processItem(it, o); own = true; } catch (e) { url = it.url; } }
+  const L = id === 'sample' ? { w: it.w, h: it.h } : lay(it);
+  if (o.quality !== 'normal') { try { url = await processItem(it, o, L); own = true; } catch (e) { url = it.url; } }
   if (tok !== prevTok) { if (own) URL.revokeObjectURL(url); return; }
   const img = $('cPrevImg'), zoom = $('cPrevZoom').checked;
   img.onload = () => {
@@ -624,7 +682,7 @@ async function updatePreview() {
   const K = dotsPerMM(o);
   $('cPrevInfo').textContent = o.quality === 'normal'
     ? 'Imagem original, sem tratamento.'
-    : `${fmt(it.w)} × ${fmt(it.h)} mm = ${Math.round(it.w * K)} × ${Math.round(it.h * K)} pontos a ${o.dpi} dpi. Cada ponto preto é um ponto aquecido na térmica.`;
+    : `${fmt(L.w)} × ${fmt(L.h)} mm = ${Math.round(L.w * K)} × ${Math.round(L.h * K)} pontos a ${o.dpi} dpi. Cada ponto preto é um ponto aquecido na térmica.`;
 }
 
 // garante que todas estão prontas (antes de imprimir / gerar a tira)
@@ -665,6 +723,8 @@ function add(files) {
 }
 const r1 = v => Math.round(v * 10) / 10;
 function setW(it, v) { it.w = v; if (it.keep) it.h = v * it.ratio; }
+function setH(it, v) { if (it.keep) { it.w = Math.min(W, v / it.ratio); it.h = it.w * it.ratio; } else it.h = v; }
+const dimTxt = it => { const L = lay(it); return `${fmt(L.bw)} × ${fmt(L.bh)} mm`; };
 function freeUrls(it) { if (it.url !== it.orig) URL.revokeObjectURL(it.url); URL.revokeObjectURL(it.orig); if (it.purl) URL.revokeObjectURL(it.purl); }
 
 // Gira a imagem em passos de 90° sempre a partir do original (sem perder qualidade)
@@ -707,7 +767,7 @@ function render() {
     d.className = 'item' + (it.id === sel ? ' sel' : '');
     d.innerHTML = `<div class="row">
         <img class="th" src="${it.url}" alt="">
-        <div class="info"><div class="name"></div><div class="dim">${Math.round(it.w)} × ${Math.round(it.h)} mm</div></div>
+        <div class="info"><div class="name"></div><div class="dim">${dimTxt(it)}</div></div>
         <div class="step" title="Quantidade"><button data-a="-">−</button><input type="number" min="1" value="${it.qty}"><button data-a="+">+</button></div>
         <div class="tools">
           ${it.design ? `<button class="ib" data-a="edit" title="Editar etiqueta">${ICON.edit}</button>` : ''}
@@ -743,37 +803,53 @@ function render() {
 function sizePanel(it, card) {
   const s = document.createElement('div');
   s.className = 'size';
+  const rotHTML = `
+    <div class="top"><span>Girar</span><b class="rot"></b></div>
+    <div class="chips">
+      <button class="chip rb" data-r="-90">↺ 90° esquerda</button>
+      <button class="chip rb" data-r="90">↻ 90° direita</button>
+      <button class="chip rb" data-r="180">180°</button>
+    </div>`;
+  const rotSync = () => { s.querySelector('.rot').textContent = it.rot ? it.rot + '°' : 'original'; };
+  if (cfg.fixed) {   // tamanho fixo na configuração: aqui só gira
+    s.innerHTML = `<div class="fixnote">Tamanho fixo ligado: todas as etiquetas saem com <b>${fmt(cfg.fw)} × ${fmt(cfg.fh)} mm</b>
+      (${cfg.fit === 'fill' ? 'esticar' : 'encaixar'}). Para mudar, use <b>Configurar</b>.</div>` + rotHTML;
+    rotSync();
+    s.querySelectorAll('.chip[data-r]').forEach(c => c.onclick = () => rotate(it, +c.dataset.r, render));
+    return s;
+  }
   s.innerHTML = `
-    <div class="top"><span>Largura</span><b><span class="w"></span> mm</b></div>
-    <input class="wr" type="range" min="10" max="${W}" step="1">
+    <div class="top"><span>Largura</span><b><input class="nw" type="number" min="10" max="${W}" step="0.5"> mm</b></div>
+    <input class="wr" type="range" min="10" max="${W}" step="0.5">
     <div class="chips">
       <button class="chip" data-v="${W}">Largura total</button>
       <button class="chip" data-v="${r1(W*.75)}">75%</button>
       <button class="chip" data-v="${r1(W*.5)}">50%</button>
       <button class="chip" data-v="${r1(W*.25)}">25%</button>
     </div>
-    <div class="top"><span>Girar</span><b class="rot"></b></div>
-    <div class="chips">
-      <button class="chip rb" data-r="-90">↺ 90° esquerda</button>
-      <button class="chip rb" data-r="90">↻ 90° direita</button>
-      <button class="chip rb" data-r="180">180°</button>
-    </div>
-    <label class="chk"><input type="checkbox"> Manter proporção</label>
-    <div class="hbox"><div class="top"><span>Altura</span><b><span class="h"></span> mm</b></div>
-    <input class="hr" type="range" min="5" max="150" step="1"></div>`;
-  const wr = s.querySelector('.wr'), hr = s.querySelector('.hr'), ck = s.querySelector('input[type=checkbox]'),
-        hb = s.querySelector('.hbox'), dim = card.querySelector('.dim');
-  const sync = () => {
-    wr.value = Math.round(it.w); s.querySelector('.w').textContent = Math.round(it.w);
-    hr.value = Math.round(it.h); s.querySelector('.h').textContent = Math.round(it.h);
-    ck.checked = it.keep; hb.style.display = it.keep ? 'none' : 'block';
-    dim.textContent = `${Math.round(it.w)} × ${Math.round(it.h)} mm`;
-    s.querySelectorAll('.chip[data-v]').forEach(c => c.classList.toggle('on', Math.round(+c.dataset.v) === Math.round(it.w)));
-    s.querySelector('.rot').textContent = it.rot ? it.rot + '°' : 'original';
+    <div class="top"><span>Altura</span><b><input class="nh" type="number" min="5" max="300" step="0.5"> mm</b></div>
+    <input class="hr" type="range" min="5" step="0.5">
+    <label class="chk"><input class="kp" type="checkbox"> Manter proporção (largura e altura mudam juntas)</label>` + rotHTML;
+  const wr = s.querySelector('.wr'), hr = s.querySelector('.hr'), ck = s.querySelector('.kp'),
+        nw = s.querySelector('.nw'), nh = s.querySelector('.nh'), dim = card.querySelector('.dim');
+  const sync = (skip) => {
+    hr.max = it.keep ? Math.max(5, Math.floor(W * it.ratio * 2) / 2) : 300;
+    wr.value = it.w; hr.value = it.h;
+    if (skip !== nw) nw.value = r1(it.w);
+    if (skip !== nh) nh.value = r1(it.h);
+    ck.checked = it.keep;
+    dim.textContent = dimTxt(it);
+    s.querySelectorAll('.chip[data-v]').forEach(c => c.classList.toggle('on', Math.abs(+c.dataset.v - it.w) < .05));
+    rotSync();
   };
   sync();
+  const num = el => parseFloat(String(el.value).replace(',', '.'));
   wr.oninput = () => { setW(it, +wr.value); sync(); draw(); };
-  hr.oninput = () => { it.h = +hr.value; sync(); draw(); };
+  hr.oninput = () => { setH(it, +hr.value); sync(); draw(); };
+  nw.oninput = () => { const v = num(nw); if (v >= 10) { setW(it, Math.min(W, v)); sync(nw); draw(); } };
+  nh.oninput = () => { const v = num(nh); if (v >= 5) { setH(it, Math.min(300, v)); sync(nh); draw(); } };
+  nw.onblur = nh.onblur = () => sync();
+  [nw, nh].forEach(el => el.onkeydown = e => { if (e.key === 'Enter') el.blur(); });
   ck.onchange = () => { it.keep = ck.checked; if (it.keep) it.h = it.w * it.ratio; sync(); draw(); };
   s.querySelectorAll('.chip[data-v]').forEach(c => c.onclick = () => { setW(it, +c.dataset.v); sync(); draw(); });
   s.querySelectorAll('.chip[data-r]').forEach(c => c.onclick = () => rotate(it, +c.dataset.r, render));
@@ -782,7 +858,12 @@ function sizePanel(it, card) {
 
 function stripHTML() {
   const parts = [];
-  items.forEach(it => { for (let i = 0; i < it.qty; i++) parts.push(`<img class="pi${cfg.quality !== 'normal' ? ' px' : ''}" src="${showSrc(it)}" style="width:${r1(it.w)}mm;height:${r1(it.h)}mm">`); });
+  const px = cfg.quality !== 'normal' ? ' px' : '', r2 = v => Math.round(v * 100) / 100;
+  items.forEach(it => {
+    const L = lay(it), img = `<img class="pi${px}" src="${showSrc(it)}" style="width:${r2(L.w)}mm;height:${r2(L.h)}mm">`;
+    const html = cfg.fixed ? `<div class="pb" style="width:${r2(L.bw)}mm;height:${r2(L.bh)}mm">${img}</div>` : img;
+    for (let i = 0; i < it.qty; i++) parts.push(html);
+  });
   if (!parts.length) return '';
   return (cfg.lineStart ? '<hr class="ln"><div class="sp"></div>' : '')
     + parts.join(cfg.showLine ? '<div class="sp"></div><hr class="ln"><div class="sp"></div>' : '<div class="sp"></div>')
@@ -794,7 +875,7 @@ function draw() {
   prev.innerHTML = h || '<div class="empty">A tira aparece aqui</div>';
   pa.innerHTML = h;
   const n = items.reduce((a, it) => a + it.qty, 0);
-  const mm = n ? items.reduce((a, it) => a + it.h * it.qty, 0) + (n - 1) * sepMM() + edgeMM() : 0;
+  const mm = n ? items.reduce((a, it) => a + lay(it).bh * it.qty, 0) + (n - 1) * sepMM() + edgeMM() : 0;
   $('sN').textContent = n;
   $('sL').textContent = (mm / 10).toFixed(1).replace('.', ',') + ' cm';
 }
@@ -841,9 +922,9 @@ const loadImg = url => new Promise((ok, err) => { const im = new Image(); im.onl
 async function renderStrip() {
   await waitProc();
   const K = dotsPerMM(), P = cfg.paper, copies = [], sharp = cfg.quality !== 'normal';
-  for (const it of items) { const im = await loadImg(sharp ? it.purl : it.url); for (let i = 0; i < it.qty; i++) copies.push({ im, w: it.w, h: it.h }); }
+  for (const it of items) { const im = await loadImg(sharp ? it.purl : it.url), L = lay(it); for (let i = 0; i < it.qty; i++) copies.push({ im, ...L }); }
   const sep = sepMM();
-  const hmm = copies.reduce((a, c) => a + c.h, 0) + Math.max(0, copies.length - 1) * sep + edgeMM() + cfg.end;
+  const hmm = copies.reduce((a, c) => a + c.bh, 0) + Math.max(0, copies.length - 1) * sep + edgeMM() + cfg.end;
   const c = document.createElement('canvas');
   c.width = Math.round(P * K); c.height = Math.max(1, Math.round(hmm * K));
   const g = c.getContext('2d');
@@ -855,8 +936,8 @@ async function renderStrip() {
   let y = 0;
   if (cfg.lineStart) { hline(0); y += cfg.line + cfg.gap; }
   copies.forEach((cp, i) => {
-    g.drawImage(cp.im, Math.round((P - cp.w) / 2 * K), Math.round(y * K), Math.round(cp.w * K), Math.round(cp.h * K));
-    y += cp.h;
+    g.drawImage(cp.im, Math.round((P - cp.w) / 2 * K), Math.round((y + (cp.bh - cp.h) / 2) * K), Math.round(cp.w * K), Math.round(cp.h * K));
+    y += cp.bh;
     if (i < copies.length - 1) {
       if (cfg.showLine) hline(y + cfg.gap);
       y += sep;
@@ -1405,6 +1486,13 @@ $('cPrevSrc').onchange = updatePreview;
 $('cPrevZoom').onchange = updatePreview;
 $('cfgDlg').addEventListener('close', () => { prevTok++; if (prevUrl) { URL.revokeObjectURL(prevUrl); prevUrl = null; } $('cPrevImg').removeAttribute('src'); });
 document.querySelectorAll('[data-dpi]').forEach(b => b.onclick = () => { $('cDpi').value = b.dataset.dpi; syncCfgForm(); });
+document.querySelectorAll('[data-fit]').forEach(b => b.onclick = () => { $('cFit').value = b.dataset.fit; syncCfgForm(); });
+document.querySelectorAll('[data-fs]').forEach(b => b.onclick = () => {
+  const [w, h] = b.dataset.fs.split('x').map(Number);
+  $('cFW').value = Math.min(w, parseFloat($('cPaper').value) || w); $('cFH').value = h; syncCfgForm();
+});
+$('cFixed').onchange = syncCfgForm;
+$('cFW').oninput = $('cFH').oninput = syncCfgForm;
 document.querySelectorAll('[data-paper]').forEach(b => b.onclick = () => {
   const p = +b.dataset.paper, old = parseFloat($('cPaper').value), a = parseFloat($('cArea').value);
   // se a imagem usava a largura toda do papel, acompanha o novo papel; senão só limita
