@@ -355,6 +355,14 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
         </div>
       </div>
       <div class="fl">
+        <label>Linhas nas pontas da tira</label>
+        <div class="inp" style="gap:18px">
+          <label class="chk"><input id="cLineStart" type="checkbox"> Linha no início</label>
+          <label class="chk"><input id="cLineEnd" type="checkbox"> Linha no final</label>
+        </div>
+        <small>Uma linha antes da primeira etiqueta e/ou depois da última, com a mesma espessura e o mesmo espaço da linha separadora.</small>
+      </div>
+      <div class="fl">
         <label id="cGapLbl">Espaço antes e depois da linha</label>
         <div class="inp"><div class="num"><input id="cGap" type="number" min="0" max="30" step="0.5"><span>mm</span></div></div>
       </div>
@@ -454,13 +462,15 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
 const $ = id => document.getElementById(id);
 
 // ---- Configuração das dimensões (salva neste computador) ----
-const DEF = { paper: 57, area: 57, showLine: true, line: 0.3, gap: 2, end: 0, quality: 'normal', dark: 50, dpi: 203 };
+const DEF = { paper: 57, area: 57, showLine: true, lineStart: false, lineEnd: false, line: 0.3, gap: 2, end: 0, quality: 'normal', dark: 50, dpi: 203 };
 const QUAL = { normal: '', mix: 'Nítida', bw: 'P&B puro', dither: 'Pontilhada' };
 let cfg = { ...DEF };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('etq57cfg') || '{}')); } catch (e) {}
 let W = cfg.area;
 const fmt = v => String(+(+v).toFixed(1)).replace('.', ',');
 const sepMM = () => cfg.showLine ? cfg.gap * 2 + cfg.line : cfg.gap;
+// linhas nas pontas: início = linha + espaço; final = espaço + linha
+const edgeMM = () => ((cfg.lineStart ? 1 : 0) + (cfg.lineEnd ? 1 : 0)) * (cfg.gap + cfg.line);
 
 function applyCfg() {
   W = cfg.area;
@@ -469,20 +479,22 @@ function applyCfg() {
   root.setProperty('--gap', cfg.gap + 'mm');
   root.setProperty('--line', cfg.line + 'mm');
   $('pageCss').textContent = `@media print{@page{size:${cfg.paper}mm auto;margin:0}#printArea{padding-bottom:${cfg.end}mm}}`;
-  $('spec').textContent = `Papel ${fmt(cfg.paper)} mm · ` + (cfg.showLine ? `${fmt(cfg.gap)} mm + linha + ${fmt(cfg.gap)} mm` : `${fmt(cfg.gap)} mm entre imagens`) + (QUAL[cfg.quality] ? ` · ${QUAL[cfg.quality]}` : '');
+  const edges = cfg.lineStart && cfg.lineEnd ? 'linha no início e no fim' : cfg.lineStart ? 'linha no início' : cfg.lineEnd ? 'linha no fim' : '';
+  $('spec').textContent = `Papel ${fmt(cfg.paper)} mm · ` + (cfg.showLine ? `${fmt(cfg.gap)} mm + linha + ${fmt(cfg.gap)} mm` : `${fmt(cfg.gap)} mm entre imagens`) + (edges ? ` · ${edges}` : '') + (QUAL[cfg.quality] ? ` · ${QUAL[cfg.quality]}` : '');
   items.forEach(it => { if (it.w > W) setW(it, W); });
 }
 
 function fillCfg(c) {
   $('cPaper').value = c.paper; $('cArea').value = c.area; $('cLine').checked = c.showLine;
+  $('cLineStart').checked = !!c.lineStart; $('cLineEnd').checked = !!c.lineEnd;
   $('cThick').value = c.line; $('cGap').value = c.gap; $('cEnd').value = c.end;
   fillPrevSrc();
   $('cQual').value = c.quality || 'normal'; $('cDark').value = c.dark == null ? 50 : c.dark; $('cDpi').value = c.dpi || 203;
   syncCfgForm();
 }
 function syncCfgForm() {
-  const on = $('cLine').checked;
-  $('cThickBox').style.opacity = on ? 1 : .4; $('cThick').disabled = !on;
+  const on = $('cLine').checked, anyLine = on || $('cLineStart').checked || $('cLineEnd').checked;
+  $('cThickBox').style.opacity = anyLine ? 1 : .4; $('cThick').disabled = !anyLine;
   $('cGapLbl').textContent = on ? 'Espaço antes e depois da linha' : 'Espaço entre as imagens';
   const q = $('cQual').value;
   $('cQualHint').textContent = QHINT[q];
@@ -494,15 +506,17 @@ function syncCfgForm() {
 }
 function readCfg() {
   const n = id => parseFloat(String($(id).value).replace(',', '.'));
-  const c = { paper: n('cPaper'), area: n('cArea'), showLine: $('cLine').checked, line: n('cThick'), gap: n('cGap'), end: n('cEnd'),
+  const c = { paper: n('cPaper'), area: n('cArea'), showLine: $('cLine').checked, lineStart: $('cLineStart').checked, lineEnd: $('cLineEnd').checked,
+              line: n('cThick'), gap: n('cGap'), end: n('cEnd'),
               quality: $('cQual').value, dark: Math.round(n('cDark')), dpi: n('cDpi') === 300 ? 300 : 203 };
   if (!(c.paper >= 20 && c.paper <= 120)) return 'Largura do papel deve ficar entre 20 e 120 mm.';
   if (!(c.area >= 10)) return 'A largura máxima da imagem deve ter pelo menos 10 mm.';
   if (c.area > c.paper) return 'A largura máxima da imagem não pode ser maior que o papel.';
-  if (c.showLine && !(c.line >= 0.1 && c.line <= 2)) return 'Espessura da linha deve ficar entre 0,1 e 2 mm.';
+  const anyLine = c.showLine || c.lineStart || c.lineEnd;
+  if (anyLine && !(c.line >= 0.1 && c.line <= 2)) return 'Espessura da linha deve ficar entre 0,1 e 2 mm.';
   if (!(c.gap >= 0 && c.gap <= 30)) return 'O espaço deve ficar entre 0 e 30 mm.';
   if (!(c.end >= 0 && c.end <= 50)) return 'O espaço no final deve ficar entre 0 e 50 mm.';
-  if (!c.showLine && !(c.line > 0)) c.line = cfg.line;
+  if (!anyLine && !(c.line > 0)) c.line = cfg.line;
   return c;
 }
 
@@ -769,7 +783,10 @@ function sizePanel(it, card) {
 function stripHTML() {
   const parts = [];
   items.forEach(it => { for (let i = 0; i < it.qty; i++) parts.push(`<img class="pi${cfg.quality !== 'normal' ? ' px' : ''}" src="${showSrc(it)}" style="width:${r1(it.w)}mm;height:${r1(it.h)}mm">`); });
-  return parts.join(cfg.showLine ? '<div class="sp"></div><hr class="ln"><div class="sp"></div>' : '<div class="sp"></div>');
+  if (!parts.length) return '';
+  return (cfg.lineStart ? '<hr class="ln"><div class="sp"></div>' : '')
+    + parts.join(cfg.showLine ? '<div class="sp"></div><hr class="ln"><div class="sp"></div>' : '<div class="sp"></div>')
+    + (cfg.lineEnd ? '<div class="sp"></div><hr class="ln">' : '');
 }
 
 function draw() {
@@ -777,7 +794,7 @@ function draw() {
   prev.innerHTML = h || '<div class="empty">A tira aparece aqui</div>';
   pa.innerHTML = h;
   const n = items.reduce((a, it) => a + it.qty, 0);
-  const mm = items.reduce((a, it) => a + it.h * it.qty, 0) + Math.max(0, n - 1) * sepMM();
+  const mm = n ? items.reduce((a, it) => a + it.h * it.qty, 0) + (n - 1) * sepMM() + edgeMM() : 0;
   $('sN').textContent = n;
   $('sL').textContent = (mm / 10).toFixed(1).replace('.', ',') + ' cm';
 }
@@ -826,22 +843,26 @@ async function renderStrip() {
   const K = dotsPerMM(), P = cfg.paper, copies = [], sharp = cfg.quality !== 'normal';
   for (const it of items) { const im = await loadImg(sharp ? it.purl : it.url); for (let i = 0; i < it.qty; i++) copies.push({ im, w: it.w, h: it.h }); }
   const sep = sepMM();
-  const hmm = copies.reduce((a, c) => a + c.h, 0) + Math.max(0, copies.length - 1) * sep + cfg.end;
+  const hmm = copies.reduce((a, c) => a + c.h, 0) + Math.max(0, copies.length - 1) * sep + edgeMM() + cfg.end;
   const c = document.createElement('canvas');
   c.width = Math.round(P * K); c.height = Math.max(1, Math.round(hmm * K));
   const g = c.getContext('2d');
   g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
   g.imageSmoothingQuality = 'high';
   g.imageSmoothingEnabled = !sharp;   // imagem já está ponto a ponto: não suavizar
+  const lineH = Math.max(1, Math.round(cfg.line * K));
+  const hline = ymm => { g.fillStyle = '#000'; g.fillRect(0, Math.round(ymm * K), c.width, lineH); };
   let y = 0;
+  if (cfg.lineStart) { hline(0); y += cfg.line + cfg.gap; }
   copies.forEach((cp, i) => {
     g.drawImage(cp.im, Math.round((P - cp.w) / 2 * K), Math.round(y * K), Math.round(cp.w * K), Math.round(cp.h * K));
     y += cp.h;
     if (i < copies.length - 1) {
-      if (cfg.showLine) { g.fillStyle = '#000'; g.fillRect(0, Math.round((y + cfg.gap) * K), c.width, Math.max(1, Math.round(cfg.line * K))); }
+      if (cfg.showLine) hline(y + cfg.gap);
       y += sep;
     }
   });
+  if (cfg.lineEnd) hline(y + cfg.gap);
   return new Promise(res => c.toBlob(b => res({ blob: b, w: c.width, h: c.height, mm: hmm, n: copies.length }), 'image/png'));
 }
 let stripFile = null, stripUrl = null;
@@ -1377,7 +1398,7 @@ $('edDlg').addEventListener('keydown', e => {
 window.addEventListener('resize', () => { if ($('edDlg').open) { edLayout(); edDraw(); } });
 
 $('cfgBtn').onclick = () => { fillCfg(cfg); $('cfgDlg').showModal(); };
-$('cLine').onchange = syncCfgForm;
+$('cLine').onchange = $('cLineStart').onchange = $('cLineEnd').onchange = syncCfgForm;
 $('cQual').onchange = syncCfgForm;
 $('cDark').oninput = syncCfgForm;
 $('cPrevSrc').onchange = updatePreview;

@@ -1,6 +1,6 @@
 // Service worker: guarda o app no aparelho para abrir mesmo sem internet.
-// Ao publicar uma versão nova, troque o número abaixo.
-const CACHE = 'etiquetas57-v5';
+// Ao publicar uma versÃ£o nova, troque o nÃºmero abaixo.
+const CACHE = 'etiquetas57-v6';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -13,7 +13,7 @@ self.addEventListener('activate', e => {
     .then(() => self.clients.claim()));
 });
 
-// Rede primeiro (pega a versão nova quando houver internet); sem internet, usa o que está guardado.
+// Rede primeiro (pega a versÃ£o nova quando houver internet); sem internet, usa o que estÃ¡ guardado.
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
