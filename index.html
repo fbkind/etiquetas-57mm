@@ -390,7 +390,7 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
       <div class="fl">
         <label>Largura máxima da imagem (área de impressão)</label>
         <div class="inp"><div class="num"><input id="cArea" type="number" min="10" max="120" step="0.5"><span>mm</span></div></div>
-        <small>Se a impressora corta as bordas, use um valor menor que o papel (ex.: 48 mm no papel de 57/58 mm).
+        <small>Se a impressora corta as bordas, use um valor menor que o papel (ex.: 46 mm na sua MobilePrinter de 57/58 mm).
           Não sabe o valor? Imprima a régua de teste e veja até onde a máquina imprime.</small>
         <div class="tbtns">
           <button type="button" class="chip" id="cTestPrint">🖨 Imprimir régua de teste</button>
@@ -408,7 +408,7 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
         </div>
         <small>Distância da borda esquerda do papel até o primeiro ponto que a impressora imprime (o primeiro número da régua de teste, na escala de cima).</small>
         <div class="tbtns">
-          <button type="button" class="chip" id="cMini58">⚡ Mini impressora 58 mm (MobilePrinter e similares): 48 mm a partir da borda</button>
+          <button type="button" class="chip" id="cMini58">⚡ Minha impressora (MobilePrinter 58 mm): 46 mm a partir da borda</button>
         </div>
       </div>
       <div class="fl">
@@ -547,10 +547,18 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
 const $ = id => document.getElementById(id);
 
 // ---- Configuração das dimensões (salva neste computador) ----
-const DEF = { paper: 57, area: 57, astart: null, fixed: false, fw: 57, fh: 30, fit: 'contain', showLine: true, lineStart: false, lineEnd: false, line: 0.3, gap: 2, end: 0, quality: 'normal', dark: 50, dpi: 203 };
+const CFG_VER = 2;   // v2: área útil real da MobilePrinter = 46 mm a partir da borda
+const DEF = { v: CFG_VER, paper: 57, area: 46, astart: 0, fixed: false, fw: 46, fh: 30, fit: 'contain', showLine: true, lineStart: false, lineEnd: false, line: 0.3, gap: 2, end: 0, quality: 'normal', dark: 50, dpi: 203 };
 const QUAL = { normal: '', mix: 'Nítida', bw: 'P&B puro', dither: 'Pontilhada' };
 let cfg = { ...DEF };
-try { Object.assign(cfg, JSON.parse(localStorage.getItem('etq57cfg') || '{}')); } catch (e) {}
+let savedCfg = {};
+try { savedCfg = JSON.parse(localStorage.getItem('etq57cfg') || '{}') || {}; } catch (e) {}
+Object.assign(cfg, savedCfg);
+// correção única das configurações já salvas: área útil de 46 mm começando na borda
+if (Object.keys(savedCfg).length && (savedCfg.v || 0) < CFG_VER) {
+  cfg.area = Math.min(46, cfg.paper); cfg.astart = 0; if (cfg.fw > cfg.area) cfg.fw = cfg.area; cfg.v = CFG_VER;
+  try { localStorage.setItem('etq57cfg', JSON.stringify(cfg)); } catch (e) {}
+}
 let W = cfg.area;
 const fmt = v => String(+(+v).toFixed(1)).replace('.', ',');
 const sepMM = () => cfg.showLine ? cfg.gap * 2 + cfg.line : cfg.gap;
@@ -621,7 +629,7 @@ function syncCfgForm() {
 }
 function readCfg() {
   const n = id => parseFloat(String($(id).value).replace(',', '.'));
-  const c = { paper: n('cPaper'), area: n('cArea'), showLine: $('cLine').checked, lineStart: $('cLineStart').checked, lineEnd: $('cLineEnd').checked,
+  const c = { v: CFG_VER, paper: n('cPaper'), area: n('cArea'), showLine: $('cLine').checked, lineStart: $('cLineStart').checked, lineEnd: $('cLineEnd').checked,
               astart: $('cAPos').value === 'center' ? null : n('cAStart'),
               fixed: $('cFixed').checked, fw: n('cFW'), fh: n('cFH'), fit: $('cFit').value === 'fill' ? 'fill' : 'contain',
               line: n('cThick'), gap: n('cGap'), end: n('cEnd'),
@@ -1032,9 +1040,9 @@ function testRulerSVG(P, pxW) {
 const formPaper = () => { const v = parseFloat(String($('cPaper').value).replace(',', '.')); return v >= 20 && v <= 120 ? v : cfg.paper; };
 const TEST_HELP = 'Olhe a escala DE CIMA (medida a partir da borda esquerda). '
   + '1) O primeiro número que aparece é o INÍCIO (se começa no 0, coloque "Na borda esquerda"). '
-  + '2) O último número que aparece menos o primeiro é a LARGURA da área. Exemplo: de 0 até 48 = 48 mm. '
+  + '2) O último número que aparece menos o primeiro é a LARGURA da área. Exemplo: de 0 até 46 = 46 mm. '
   + 'Coloque os valores em "Largura máxima da imagem" e "Onde a impressora começa a imprimir" e clique em Salvar. '
-  + 'Mini impressora 58 mm comum? Use o botão ⚡ que já preenche 48 mm a partir da borda.';
+  + 'Na sua MobilePrinter, use o botão ⚡ que já preenche 46 mm a partir da borda.';
 $('cTestPrint').onclick = () => {
   const P = formPaper(), css = $('pageCss'), old = css.textContent;
   css.textContent = `@media print{@page{size:${P}mm auto;margin:0}#printArea{box-sizing:border-box!important;width:${P}mm!important;padding:0!important}}`;
@@ -1684,9 +1692,9 @@ document.querySelectorAll('[data-apos]').forEach(b => b.onclick = () => {
 $('cAStart').oninput = () => { $('cAPos').value = 'custom'; syncCfgForm(); };
 $('cPaper').addEventListener('input', syncCfgForm);
 $('cArea').addEventListener('input', syncCfgForm);
-$('cMini58').onclick = () => {   // cabeça de 48 mm (384 pontos) que começa na borda esquerda
-  $('cArea').value = 48; $('cAPos').value = 'custom'; $('cAStart').value = 0;
-  if (parseFloat($('cFW').value) > 48) $('cFW').value = 48;
+$('cMini58').onclick = () => {   // área útil medida: 46 mm começando na borda esquerda
+  $('cArea').value = 46; $('cAPos').value = 'custom'; $('cAStart').value = 0;
+  if (parseFloat($('cFW').value) > 46) $('cFW').value = 46;
   syncCfgForm();
 };
 $('cFW').oninput = $('cFH').oninput = syncCfgForm;
