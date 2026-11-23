@@ -111,7 +111,7 @@ aside{position:sticky;top:90px;align-self:start;display:flex;flex-direction:colu
 .rcorner{font-size:9px;color:var(--mut);display:flex;align-items:flex-end;justify-content:center;padding-bottom:2px}
 .rleft{background:#0b1530;align-self:stretch}
 .rgrid svg{display:block}
-#preview{margin:0;padding:0 0 var(--end,0mm);position:relative}
+#preview{margin:0;box-sizing:content-box;width:var(--aW,57mm);padding:0 var(--aR,0mm) var(--end,0mm) var(--aL,0mm);position:relative}
 .aov{position:absolute;top:0;bottom:0;pointer-events:none;z-index:2;background:repeating-linear-gradient(45deg,rgba(255,60,60,.22) 0 3px,transparent 3px 7px)}
 .aov.l{left:0;border-right:1px dashed rgba(230,40,40,.9)}
 .aov.r{right:0;border-left:1px dashed rgba(230,40,40,.9)}
@@ -386,6 +386,20 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
         </div>
       </div>
       <div class="fl">
+        <label>Onde a impressora começa a imprimir</label>
+        <div class="inp">
+          <button type="button" class="chip" data-apos="center">Centralizada</button>
+          <button type="button" class="chip" data-apos="left">Na borda esquerda</button>
+          <span style="color:var(--mut);font-size:12px">início:</span>
+          <div class="num"><input id="cAStart" type="number" min="0" max="100" step="0.5"><span>mm</span></div>
+          <input type="hidden" id="cAPos">
+        </div>
+        <small>Distância da borda esquerda do papel até o primeiro ponto que a impressora imprime (o primeiro número da régua de teste, na escala de cima).</small>
+        <div class="tbtns">
+          <button type="button" class="chip" id="cMini58">⚡ Mini impressora 58 mm (MobilePrinter e similares): 48 mm a partir da borda</button>
+        </div>
+      </div>
+      <div class="fl">
         <label>Tamanho da etiqueta (largura × altura)</label>
         <div class="inp"><label class="chk"><input id="cFixed" type="checkbox"> Mesmo tamanho para todas as etiquetas</label></div>
         <div id="cFixBox">
@@ -521,13 +535,16 @@ main{padding-bottom:calc(22px + env(safe-area-inset-bottom,0px))}
 const $ = id => document.getElementById(id);
 
 // ---- Configuração das dimensões (salva neste computador) ----
-const DEF = { paper: 57, area: 57, fixed: false, fw: 57, fh: 30, fit: 'contain', showLine: true, lineStart: false, lineEnd: false, line: 0.3, gap: 2, end: 0, quality: 'normal', dark: 50, dpi: 203 };
+const DEF = { paper: 57, area: 57, astart: null, fixed: false, fw: 57, fh: 30, fit: 'contain', showLine: true, lineStart: false, lineEnd: false, line: 0.3, gap: 2, end: 0, quality: 'normal', dark: 50, dpi: 203 };
 const QUAL = { normal: '', mix: 'Nítida', bw: 'P&B puro', dither: 'Pontilhada' };
 let cfg = { ...DEF };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('etq57cfg') || '{}')); } catch (e) {}
 let W = cfg.area;
 const fmt = v => String(+(+v).toFixed(1)).replace('.', ',');
 const sepMM = () => cfg.showLine ? cfg.gap * 2 + cfg.line : cfg.gap;
+// área de impressão dentro do papel: começa em L mm da borda esquerda; R = sobra à direita
+const areaL = (c = cfg) => c.astart == null ? (c.paper - c.area) / 2 : c.astart;
+const areaR = (c = cfg) => Math.max(0, c.paper - areaL(c) - c.area);
 // tamanho final de cada etiqueta na tira: caixa (bw × bh) e a imagem dentro dela (w × h)
 function lay(it) {
   if (!cfg.fixed) return { bw: it.w, bh: it.h, w: it.w, h: it.h };
@@ -547,7 +564,10 @@ function applyCfg() {
   root.setProperty('--gap', cfg.gap + 'mm');
   root.setProperty('--line', cfg.line + 'mm');
   root.setProperty('--end', cfg.end + 'mm');
-  $('pageCss').textContent = `@media print{@page{size:${cfg.paper}mm auto;margin:0}#printArea{padding-bottom:${cfg.end}mm}}`;
+  const aL = areaL(), aR = areaR();
+  root.setProperty('--aL', aL + 'mm'); root.setProperty('--aW', cfg.area + 'mm'); root.setProperty('--aR', aR + 'mm');
+  $('pageCss').textContent = `@media print{@page{size:${cfg.paper}mm auto;margin:0}`
+    + `#printArea{box-sizing:content-box!important;width:${cfg.area}mm!important;padding:0 ${aR}mm ${cfg.end}mm ${aL}mm!important}}`;
   const edges = cfg.lineStart && cfg.lineEnd ? 'linha no início e no fim' : cfg.lineStart ? 'linha no início' : cfg.lineEnd ? 'linha no fim' : '';
   $('spec').textContent = `Papel ${fmt(cfg.paper)} mm · ` + (cfg.fixed ? `etiqueta ${fmt(cfg.fw)} × ${fmt(cfg.fh)} mm · ` : '') + (cfg.showLine ? `${fmt(cfg.gap)} mm + linha + ${fmt(cfg.gap)} mm` : `${fmt(cfg.gap)} mm entre imagens`) + (edges ? ` · ${edges}` : '') + (QUAL[cfg.quality] ? ` · ${QUAL[cfg.quality]}` : '');
   items.forEach(it => { if (it.w > W) setW(it, W); });
@@ -556,6 +576,8 @@ function applyCfg() {
 function fillCfg(c) {
   $('cPaper').value = c.paper; $('cArea').value = c.area; $('cLine').checked = c.showLine;
   $('cLineStart').checked = !!c.lineStart; $('cLineEnd').checked = !!c.lineEnd;
+  $('cAPos').value = c.astart == null ? 'center' : 'custom';
+  $('cAStart').value = r1(c.astart == null ? (c.paper - c.area) / 2 : c.astart);
   $('cFixed').checked = !!c.fixed; $('cFW').value = c.fw || 57; $('cFH').value = c.fh || 30; $('cFit').value = c.fit || 'contain';
   $('cThick').value = c.line; $('cGap').value = c.gap; $('cEnd').value = c.end;
   fillPrevSrc();
@@ -566,6 +588,10 @@ function syncCfgForm() {
   const on = $('cLine').checked, anyLine = on || $('cLineStart').checked || $('cLineEnd').checked;
   $('cThickBox').style.opacity = anyLine ? 1 : .4; $('cThick').disabled = !anyLine;
   $('cGapLbl').textContent = on ? 'Espaço antes e depois da linha' : 'Espaço entre as imagens';
+  const fp = id => parseFloat(String($(id).value).replace(',', '.'));
+  if ($('cAPos').value === 'center') { const p = fp('cPaper'), a = fp('cArea'); if (p > 0 && a > 0) $('cAStart').value = r1(Math.max(0, (p - a) / 2)); }
+  document.querySelectorAll('[data-apos]').forEach(b => b.classList.toggle('on',
+    b.dataset.apos === 'center' ? $('cAPos').value === 'center' : ($('cAPos').value === 'custom' && fp('cAStart') === 0)));
   const fx = $('cFixed').checked;
   $('cFixBox').style.display = fx ? '' : 'none';
   $('cFixHint').textContent = fx
@@ -584,12 +610,17 @@ function syncCfgForm() {
 function readCfg() {
   const n = id => parseFloat(String($(id).value).replace(',', '.'));
   const c = { paper: n('cPaper'), area: n('cArea'), showLine: $('cLine').checked, lineStart: $('cLineStart').checked, lineEnd: $('cLineEnd').checked,
+              astart: $('cAPos').value === 'center' ? null : n('cAStart'),
               fixed: $('cFixed').checked, fw: n('cFW'), fh: n('cFH'), fit: $('cFit').value === 'fill' ? 'fill' : 'contain',
               line: n('cThick'), gap: n('cGap'), end: n('cEnd'),
               quality: $('cQual').value, dark: Math.round(n('cDark')), dpi: n('cDpi') === 300 ? 300 : 203 };
   if (!(c.paper >= 20 && c.paper <= 120)) return 'Largura do papel deve ficar entre 20 e 120 mm.';
   if (!(c.area >= 10)) return 'A largura máxima da imagem deve ter pelo menos 10 mm.';
   if (c.area > c.paper) return 'A largura máxima da imagem não pode ser maior que o papel.';
+  if (c.astart != null) {
+    if (!(c.astart >= 0)) return 'O início da área de impressão deve ser 0 ou mais.';
+    if (c.astart + c.area > c.paper + .01) return `Início (${fmt(c.astart)} mm) + área (${fmt(c.area)} mm) passa da largura do papel (${fmt(c.paper)} mm).`;
+  }
   if (c.fixed) {
     if (!(c.fw >= 10)) return 'A largura da etiqueta deve ter pelo menos 10 mm.';
     if (c.fw > c.area) return `A largura da etiqueta (${fmt(c.fw)} mm) passa da área de impressão (${fmt(c.area)} mm). Use no máximo ${fmt(c.area)} mm.`;
@@ -910,9 +941,9 @@ function draw() {
     tmp.querySelectorAll('img.pi').forEach(im => { if (parseFloat(im.style.width) > cfg.area + tol) im.classList.add('over'); });
     hp = tmp.innerHTML;
   }
-  const m = (cfg.paper - cfg.area) / 2;
+  const aL = areaL(), aR = areaR();
   prev.innerHTML = (hp || '<div class="empty">A tira aparece aqui</div>')
-    + (m > .01 ? `<div class="aov l" style="width:${m}mm"></div><div class="aov r" style="width:${m}mm"></div>` : '');
+    + (aL > .01 ? `<div class="aov l" style="width:${aL}mm"></div>` : '') + (aR > .01 ? `<div class="aov r" style="width:${aR}mm"></div>` : '');
   const n = items.reduce((a, it) => a + it.qty, 0);
   const mm = n ? items.reduce((a, it) => a + lay(it).bh * it.qty, 0) + (n - 1) * sepMM() + edgeMM() : 0;
   $('sN').textContent = n;
@@ -945,13 +976,14 @@ function rulerSVG(len, vert, a0, a1) {
     + `<g fill="#cfe0ff" font-size="2.2" font-family="Bahnschrift,Arial">${tx}</g></svg>`;
 }
 function drawRulers() {
-  const m = (cfg.paper - cfg.area) / 2;
-  $('rulerTop').innerHTML = rulerSVG(cfg.paper, false, m, cfg.paper - m);
+  const aL = areaL(), aR = areaR();
+  $('rulerTop').innerHTML = rulerSVG(cfg.paper, false, aL, aL + cfg.area);
   const hmm = prev.getBoundingClientRect().height * 25.4 / 96;
   $('rulerLeft').innerHTML = rulerSVG(hmm, true);
+  const out = Math.abs(aL - aR) < .01 ? `${fmt(aL)} mm de cada lado` : `${fmt(aL)} mm à esquerda, ${fmt(aR)} mm à direita`;
   $('rLegend').innerHTML = `<span>Papel: <b>${fmt(cfg.paper)} mm</b></span>`
-    + `<span><i class="ka"></i>Área de impressão: <b>${fmt(cfg.area)} mm</b></span>`
-    + (m > .01 ? `<span><i class="ko"></i>Fora da área (${fmt(m)} mm de cada lado): a impressora não imprime</span>` : '');
+    + `<span><i class="ka"></i>Área de impressão: <b>${fmt(cfg.area)} mm</b>${cfg.astart == null ? '' : ` (começa em ${fmt(aL)} mm)`}</span>`
+    + (aL + aR > .01 ? `<span><i class="ko"></i>Fora da área (${out}): a impressora não imprime</span>` : '');
 }
 
 // ======================= Régua de teste (para medir a área real da impressora) =======================
@@ -977,12 +1009,14 @@ function testRulerSVG(P, pxW) {
     + `<g font-family="Arial" font-size="2.6" font-weight="700" fill="#000" text-anchor="middle">${tx}</g></svg>`;
 }
 const formPaper = () => { const v = parseFloat(String($('cPaper').value).replace(',', '.')); return v >= 20 && v <= 120 ? v : cfg.paper; };
-const TEST_HELP = 'Olhe a escala DE BAIXO (medida a partir do centro) e veja até que número aparece de cada lado. '
-  + 'Some os dois: essa é a largura real que a máquina imprime. Exemplo: 24 de um lado + 24 do outro = 48 mm. '
-  + 'Coloque esse valor em "Largura máxima da imagem (área de impressão)" e clique em Salvar.';
+const TEST_HELP = 'Olhe a escala DE CIMA (medida a partir da borda esquerda). '
+  + '1) O primeiro número que aparece é o INÍCIO (se começa no 0, coloque "Na borda esquerda"). '
+  + '2) O último número que aparece menos o primeiro é a LARGURA da área. Exemplo: de 0 até 48 = 48 mm. '
+  + 'Coloque os valores em "Largura máxima da imagem" e "Onde a impressora começa a imprimir" e clique em Salvar. '
+  + 'Mini impressora 58 mm comum? Use o botão ⚡ que já preenche 48 mm a partir da borda.';
 $('cTestPrint').onclick = () => {
   const P = formPaper(), css = $('pageCss'), old = css.textContent;
-  css.textContent = `@media print{@page{size:${P}mm auto;margin:0}#printArea{width:${P}mm!important}}`;
+  css.textContent = `@media print{@page{size:${P}mm auto;margin:0}#printArea{box-sizing:border-box!important;width:${P}mm!important;padding:0!important}}`;
   pa.innerHTML = testRulerSVG(P);
   const back = () => { css.textContent = old; draw(); uiAlert(TEST_HELP, 'Como ler a régua de teste'); };
   window.addEventListener('afterprint', back, { once: true });
@@ -1055,11 +1089,12 @@ async function renderStrip() {
   g.imageSmoothingQuality = 'high';
   g.imageSmoothingEnabled = !sharp;   // imagem já está ponto a ponto: não suavizar
   const lineH = Math.max(1, Math.round(cfg.line * K));
-  const hline = ymm => { g.fillStyle = '#000'; g.fillRect(0, Math.round(ymm * K), c.width, lineH); };
+  const aL = areaL(), A = cfg.area;   // tudo dentro da área de impressão
+  const hline = ymm => { g.fillStyle = '#000'; g.fillRect(Math.round(aL * K), Math.round(ymm * K), Math.round(A * K), lineH); };
   let y = 0;
   if (cfg.lineStart) { hline(0); y += cfg.line + cfg.gap; }
   copies.forEach((cp, i) => {
-    g.drawImage(cp.im, Math.round((P - cp.w) / 2 * K), Math.round((y + (cp.bh - cp.h) / 2) * K), Math.round(cp.w * K), Math.round(cp.h * K));
+    g.drawImage(cp.im, Math.round((aL + (A - cp.w) / 2) * K), Math.round((y + (cp.bh - cp.h) / 2) * K), Math.round(cp.w * K), Math.round(cp.h * K));
     y += cp.bh;
     if (i < copies.length - 1) {
       if (cfg.showLine) hline(y + cfg.gap);
@@ -1618,6 +1653,19 @@ document.querySelectorAll('[data-fs]').forEach(b => b.onclick = () => {
   $('cFW').value = Math.min(w, parseFloat($('cArea').value) || w); $('cFH').value = h; syncCfgForm();
 });
 $('cFixed').onchange = syncCfgForm;
+document.querySelectorAll('[data-apos]').forEach(b => b.onclick = () => {
+  $('cAPos').value = b.dataset.apos === 'center' ? 'center' : 'custom';
+  if (b.dataset.apos === 'left') $('cAStart').value = 0;
+  syncCfgForm();
+});
+$('cAStart').oninput = () => { $('cAPos').value = 'custom'; syncCfgForm(); };
+$('cPaper').addEventListener('input', syncCfgForm);
+$('cArea').addEventListener('input', syncCfgForm);
+$('cMini58').onclick = () => {   // cabeça de 48 mm (384 pontos) que começa na borda esquerda
+  $('cArea').value = 48; $('cAPos').value = 'custom'; $('cAStart').value = 0;
+  if (parseFloat($('cFW').value) > 48) $('cFW').value = 48;
+  syncCfgForm();
+};
 $('cFW').oninput = $('cFH').oninput = syncCfgForm;
 document.querySelectorAll('[data-paper]').forEach(b => b.onclick = () => {
   const p = +b.dataset.paper, old = parseFloat($('cPaper').value), a = parseFloat($('cArea').value);
